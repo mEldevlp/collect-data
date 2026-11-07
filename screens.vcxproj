@@ -116,6 +116,8 @@
     <ClCompile Include="src\scroll.c" />
     <ClCompile Include="src\scenarios.c" />
     <ClCompile Include="src\console.c" />
+    <ClCompile Include="src\names.c" />
+    <ClCompile Include="src\mmc.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\common.h" />
@@ -127,6 +129,8 @@
     <ClInclude Include="src\scenarios.h" />
     <ClInclude Include="src\scroll.h" />
     <ClInclude Include="src\console.h" />
+    <ClInclude Include="src\names.h" />
+    <ClInclude Include="src\mmc.h" />
     <ClInclude Include="third_party\stb_image_write.h" />
   </ItemGroup>
   <ItemGroup>

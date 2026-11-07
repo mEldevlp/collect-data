@@ -78,6 +78,12 @@ void wnd_unraise(HWND *windows, int count);
 // которому принадлежит окно (можно завершить), или NULL.
 void wnd_track(HWND window, HANDLE process, const WCHAR *log_name);
 
+// Действие после закрытия запомненного окна (и выхода его процесса, если он наш): например, вернуть
+// файл, который программа переписала при выходе. Вызывается и при аварийной уборке; при /keep окно
+// не закрывается - и действие не выполняется.
+typedef void (*WND_CLOSE_ACTION)(void *argument);
+void wnd_on_close(HWND window, WND_CLOSE_ACTION action, void *argument);
+
 // Закрыть одно запомненное окно: WM_CLOSE, ответ "Нет" на вопрос о сохранении,
 // через 5 с - TerminateProcess, если процесс наш.
 void wnd_close(HWND window);

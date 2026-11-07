@@ -85,10 +85,12 @@ typedef struct
 // Запомненное окно: закрыть в конце сценария или прогона
 typedef struct
 {
-    HWND   window;
-    DWORD  process_id;
-    HANDLE process;             // наш процесс - можно завершить; иначе NULL
-    WCHAR  log_name[TRACK_LOG_NAME_CCH];
+    HWND             window;
+    DWORD            process_id;
+    HANDLE           process;           // наш процесс - можно завершить; иначе NULL
+    WCHAR            log_name[TRACK_LOG_NAME_CCH];
+    WND_CLOSE_ACTION close_action;      // после закрытия окна (NULL - нет)
+    void            *close_argument;
 } TRACKED_WINDOW;
 
 // Активность процесса с момента его запуска
@@ -319,10 +321,28 @@ void wnd_track(HWND window, HANDLE process, const WCHAR *log_name)
         GetWindowThreadProcessId(window, &tracked->process_id);
         tracked->process = process;
         lstrcpynW(tracked->log_name, log_name ? log_name : L"окно", TRACK_LOG_NAME_CCH);
+        tracked->close_action = NULL;
+        tracked->close_argument = NULL;
     }
     else if (process)
     {
         CloseHandle(process);
+    }
+
+    tracked_lock_leave();
+}
+
+void wnd_on_close(HWND window, WND_CLOSE_ACTION action, void *argument)
+{
+    tracked_lock_enter();
+
+    for (int i = 0; i < g_tracked_count; i++)
+    {
+        if (g_tracked[i].window != window) continue;
+
+        g_tracked[i].close_action = action;
+        g_tracked[i].close_argument = argument;
+        break;
     }
 
     tracked_lock_leave();
@@ -953,21 +973,26 @@ static void close_window(const TRACKED_WINDOW *tracked, DWORD wait_ms)
     }
 }
 
-// Закрыть запомненное окно и отпустить его процесс.
-static void close_tracked(const TRACKED_WINDOW *tracked, DWORD wait_ms)
+// Наш процесс (rundll32, mmc и т. п.) должен выйти сам после закрытия окна; не вышел - завершить.
+static void release_process(const TRACKED_WINDOW *tracked)
 {
-    if (IsWindow(tracked->window)) close_window(tracked, wait_ms);
-    if (!tracked->process) return;
-
-    // наш процесс (rundll32 и т. п.) должен выйти сам после закрытия окна
     if (WaitForSingleObject(tracked->process, PROCESS_EXIT_WAIT_MS) == WAIT_TIMEOUT)
     {
         TerminateProcess(tracked->process, TERMINATED_EXIT_CODE);
+        WaitForSingleObject(tracked->process, TERMINATE_WAIT_MS);
         log_msg(L"%s: процесс PID %lu не завершился после закрытия окна - завершён", tracked->log_name,
                 tracked->process_id);
     }
 
     CloseHandle(tracked->process);
+}
+
+// Закрыть запомненное окно, отпустить его процесс и выполнить действие после закрытия.
+static void close_tracked(const TRACKED_WINDOW *tracked, DWORD wait_ms)
+{
+    if (IsWindow(tracked->window)) close_window(tracked, wait_ms);
+    if (tracked->process) release_process(tracked);
+    if (tracked->close_action) tracked->close_action(tracked->close_argument);
 }
 
 void wnd_close(HWND window)
@@ -994,7 +1019,8 @@ void wnd_close_all(BOOL keep)
             SetWindowPos(tracked.window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_ZORDER_ONLY | SWP_ASYNCWINDOWPOS);
         }
 
-        log_msg(L"%s: оставлено открытым (/keep)", tracked.log_name);
+        log_msg(L"%s: оставлено открытым (/keep)%s", tracked.log_name,
+                tracked.close_action ? L", действие после закрытия не выполняется" : L"");
 
         if (tracked.process) CloseHandle(tracked.process);
     }

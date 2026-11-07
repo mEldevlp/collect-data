@@ -1,0 +1,229 @@
+﻿
+07.11.2026 12:38:23.542  === screens.exe 0.1, запуск: "C:\scr_test\screens_x86.exe"  "C:\scr_test\out" /only:audit_base,password_policy,acc_policy1 /dump 
+07.11.2026 12:38:23.542  Компьютер: AUDIT-W7, пользователь: auditor
+07.11.2026 12:38:23.542  ОС: 6.1.7601 Service Pack 1, 32 бит, язык интерфейса 0x0409
+07.11.2026 12:38:23.542  Сборка утилиты: x86
+07.11.2026 12:38:23.542  Права администратора: да
+07.11.2026 12:38:23.542  Экран: 1024x768, виртуальный экран 0,0 1024x768, мониторов 1, удалённый сеанс: нет
+07.11.2026 12:38:23.542  DPI: 96
+07.11.2026 12:38:23.542  --- Сценарий audit_base: gpedit: Локальные политики - Политика аудита
+07.11.2026 12:38:23.560  Система: запуск "C:\Windows\system32\control.exe" /name Microsoft.System (PID 1980)
+07.11.2026 12:38:23.993  Система: окно через 481 мс: CabinetWClass "System" PID 1492, 122,74-922,674 (800x600)
+07.11.2026 12:38:24.028  gpedit: Локальные политики - Политика аудита: запуск "C:\Windows\system32\mmc.exe" "C:\Windows\system32\gpedit.msc" (PID 2004)
+07.11.2026 12:38:27.784  gpedit: Локальные политики - Политика аудита: окно через 4637 мс: MMCMainFrame "Local Group Policy Editor" PID 2004, 154,154-922,691 (768x537)
+07.11.2026 12:38:27.784  MMC: вид консоли (gpedit) будет возвращён после закрытия (файла не было)
+07.11.2026 12:38:27.824  Раскладка: сведения о системе 324,0 700x680
+07.11.2026 12:38:27.864  Раскладка: целевое окно 0,0 520x728
+07.11.2026 12:38:30.638  MMC: выбран узел "Политика аудита"
+07.11.2026 12:38:31.910  MMC: строк в списке: 9
+07.11.2026 12:38:31.982  MMC: ширина столбцов списка: 155 и 162 (место 317)
+07.11.2026 12:38:31.982  MMC: дочерние окна консоли:
+    MDIClient "" PID 2004, 8,82-512,720 (504x638)
+    MMCChildFrm "Local Computer Policy\Computer Configuration\Windows Settings\Security Settings" PID 2004, 0,52-520,728 (520x676)
+    MMCViewWindow "" PID 2004, 8,82-512,697 (504x615)
+    SysListView32 "" PID 2004, 167,82-512,697 (345x615)
+    SysHeader32 "" PID 2004, 169,84-510,108 (341x24)
+    AfxFrameOrView42u "" PID 2004, 512,82-512,697 (0x615)
+    NativeHWNDHost "ActionsPaneView" PID 2004, 512,103-512,697 (0x594)
+    DirectUIHWND "" PID 2004, 512,103-512,697 (0x594)
+    CtrlNotifySink "" PID 2004, 512,103-512,103 (0x0)
+    ScrollBar "" PID 2004, 512,103-512,103 (0x0)
+    CtrlNotifySink "" PID 2004, 512,103-512,103 (0x0)
+    ScrollBar "" PID 2004, 512,103-512,103 (0x0)
+    SysTreeView32 "" PID 2004, 8,82-164,697 (156x615)
+    Static "Audit Policy " PID 2004, 167,82-512,697 (345x615)
+    AMCCustomTab "" PID 2004, 8,82-8,82 (0x0)
+    Edit "0" PID 2004, 8,82-8,82 (0x0)
+    msctls_updown32 "" PID 2004, 8,82-46,101 (38x19)
+    MMCOCXViewWindow "" PID 2004, 167,82-512,697 (345x615)
+    AtlAxWinEx "" PID 2004, 167,82-512,697 (345x615)
+    Shell Embedding "" PID 2004, 167,82-512,697 (345x615)
+    Shell DocObject View "" PID 2004, 167,82-512,697 (345x615)
+    Internet Explorer_Server "" PID 2004, 167,82-512,697 (345x615)
+    msctls_statusbar32 "" PID 2004, 8,697-512,720 (504x23)
+    msctls_progress32 "" PID 2004, 296,701-423,718 (127x17)
+    Static "" PID 2004, 427,701-506,718 (79x17)
+    SizeableRebar "" PID 2004, 8,30-512,82 (504x52)
+    ReBarWindow32 "" PID 2004, 8,30-512,76 (504x46)
+    ToolbarWindow32 "" PID 2004, 10,54-512,76 (502x22)
+    ToolbarWindow32 "" PID 2004, 10,30-512,52 (502x22)
+    AfxWnd42u "" PID 2004, 8,30-65,49 (57x19)
+07.11.2026 12:38:32.093  MMC: видимые узлы дерева (26):
+    "Local Computer Policy"
+    "Computer Configuration"
+    "Software Settings"
+    "Windows Settings"
+    "Name Resolution Policy"
+    "Scripts (Startup/Shutdown)"
+    "Deployed Printers"
+    "Security Settings"
+    "Account Policies"
+    "Local Policies"
+    "Audit Policy"
+    "User Rights Assignment"
+    "Security Options"
+    "Windows Firewall with Advanced Security"
+    "Network List Manager Policies"
+    "Public Key Policies"
+    "Software Restriction Policies"
+    "Application Control Policies"
+    "IP Security Policies on Local Computer"
+    "Advanced Audit Policy Configuration"
+    "Policy-based QoS"
+    "Administrative Templates"
+    "User Configuration"
+    "Software Settings"
+    "Windows Settings"
+    "Administrative Templates"
+07.11.2026 12:38:32.101  Часы: TrayClockWClass 934,730-1009,768, навожу курсор в 971,749
+07.11.2026 12:38:32.618  Часы: подсказка появилась через 501 мс (класс ClockTooltipWindow, 922,692-1021,728)
+07.11.2026 12:38:33.106  Снимок сохранён: Аудит.png
+07.11.2026 12:38:33.202  gpedit: Локальные политики - Политика аудита: закрыто
+07.11.2026 12:38:33.290  MMC: файл вида консоли удалён (до запуска его не было)
+07.11.2026 12:38:33.290  Сценарий audit_base: успешно за 12058 мс
+07.11.2026 12:38:33.290  --- Сценарий password_policy: gpedit: Политики учётных записей - Политика паролей
+07.11.2026 12:38:33.290  gpedit: Политики учётных записей - Политика паролей: запуск "C:\Windows\system32\mmc.exe" "C:\Windows\system32\gpedit.msc" (PID 2164)
+07.11.2026 12:38:33.744  gpedit: Политики учётных записей - Политика паролей: окно через 520 мс: MMCMainFrame "Local Group Policy Editor" PID 2164, 154,154-922,691 (768x537)
+07.11.2026 12:38:33.744  MMC: вид консоли (gpedit) будет возвращён после закрытия (файла не было)
+07.11.2026 12:38:33.744  Раскладка: сведения о системе 324,0 700x680
+07.11.2026 12:38:33.762  Раскладка: целевое окно 0,0 520x728
+07.11.2026 12:38:35.056  MMC: выбран узел "Политика паролей"
+07.11.2026 12:38:36.455  MMC: строк в списке: 6
+07.11.2026 12:38:36.482  MMC: ширина столбцов списка: 170 и 147 (место 317)
+07.11.2026 12:38:36.482  MMC: дочерние окна консоли:
+    MDIClient "" PID 2164, 8,82-512,720 (504x638)
+    MMCChildFrm "Local Computer Policy\Computer Configuration\Windows Settings\Security Settings" PID 2164, 0,52-520,728 (520x676)
+    MMCViewWindow "" PID 2164, 8,82-512,697 (504x615)
+    SysListView32 "" PID 2164, 167,82-512,697 (345x615)
+    SysHeader32 "" PID 2164, 169,84-510,108 (341x24)
+    AfxFrameOrView42u "" PID 2164, 512,82-512,697 (0x615)
+    NativeHWNDHost "ActionsPaneView" PID 2164, 512,103-512,697 (0x594)
+    DirectUIHWND "" PID 2164, 512,103-512,697 (0x594)
+    CtrlNotifySink "" PID 2164, 512,103-512,103 (0x0)
+    ScrollBar "" PID 2164, 512,103-512,103 (0x0)
+    CtrlNotifySink "" PID 2164, 512,103-512,103 (0x0)
+    ScrollBar "" PID 2164, 512,103-512,103 (0x0)
+    SysTreeView32 "" PID 2164, 8,82-164,697 (156x615)
+    Static "Password Policy " PID 2164, 167,82-512,697 (345x615)
+    AMCCustomTab "" PID 2164, 8,82-8,82 (0x0)
+    Edit "0" PID 2164, 8,82-8,82 (0x0)
+    msctls_updown32 "" PID 2164, 8,82-46,101 (38x19)
+    MMCOCXViewWindow "" PID 2164, 167,82-512,697 (345x615)
+    AtlAxWinEx "" PID 2164, 167,82-512,697 (345x615)
+    Shell Embedding "" PID 2164, 167,82-512,697 (345x615)
+    Shell DocObject View "" PID 2164, 167,82-512,697 (345x615)
+    Internet Explorer_Server "" PID 2164, 167,82-512,697 (345x615)
+    msctls_statusbar32 "" PID 2164, 8,697-512,720 (504x23)
+    msctls_progress32 "" PID 2164, 296,701-423,718 (127x17)
+    Static "" PID 2164, 427,701-506,718 (79x17)
+    SizeableRebar "" PID 2164, 8,30-512,82 (504x52)
+    ReBarWindow32 "" PID 2164, 8,30-512,76 (504x46)
+    ToolbarWindow32 "" PID 2164, 10,54-512,76 (502x22)
+    ToolbarWindow32 "" PID 2164, 10,30-512,52 (502x22)
+    AfxWnd42u "" PID 2164, 8,30-65,49 (57x19)
+07.11.2026 12:38:36.490  MMC: видимые узлы дерева (25):
+    "Local Computer Policy"
+    "Computer Configuration"
+    "Software Settings"
+    "Windows Settings"
+    "Name Resolution Policy"
+    "Scripts (Startup/Shutdown)"
+    "Deployed Printers"
+    "Security Settings"
+    "Account Policies"
+    "Password Policy"
+    "Account Lockout Policy"
+    "Local Policies"
+    "Windows Firewall with Advanced Security"
+    "Network List Manager Policies"
+    "Public Key Policies"
+    "Software Restriction Policies"
+    "Application Control Policies"
+    "IP Security Policies on Local Computer"
+    "Advanced Audit Policy Configuration"
+    "Policy-based QoS"
+    "Administrative Templates"
+    "User Configuration"
+    "Software Settings"
+    "Windows Settings"
+    "Administrative Templates"
+07.11.2026 12:38:36.517  Часы: TrayClockWClass 934,730-1009,768, навожу курсор в 971,749
+07.11.2026 12:38:37.085  Часы: подсказка появилась через 501 мс (класс ClockTooltipWindow, 922,692-1021,728)
+07.11.2026 12:38:37.575  Снимок сохранён: Политика паролей.png
+07.11.2026 12:38:37.662  gpedit: Политики учётных записей - Политика паролей: закрыто
+07.11.2026 12:38:37.706  MMC: файл вида консоли удалён (до запуска его не было)
+07.11.2026 12:38:37.715  Сценарий password_policy: успешно за 5067 мс
+07.11.2026 12:38:37.715  --- Сценарий acc_policy1: gpedit: Политика блокировки учётной записи
+07.11.2026 12:38:37.715  gpedit: Политика блокировки учётной записи: запуск "C:\Windows\system32\mmc.exe" "C:\Windows\system32\gpedit.msc" (PID 2264)
+07.11.2026 12:38:37.995  gpedit: Политика блокировки учётной записи: окно через 320 мс: MMCMainFrame "Local Group Policy Editor" PID 2264, 154,154-922,691 (768x537)
+07.11.2026 12:38:37.995  MMC: вид консоли (gpedit) будет возвращён после закрытия (файла не было)
+07.11.2026 12:38:37.995  Раскладка: сведения о системе 324,0 700x680
+07.11.2026 12:38:38.003  Раскладка: целевое окно 0,0 520x728
+07.11.2026 12:38:39.175  MMC: выбран узел "Политика блокировки учётной записи"
+07.11.2026 12:38:40.574  MMC: строк в списке: 3
+07.11.2026 12:38:40.601  MMC: ширина столбцов списка: 177 и 140 (место 317)
+07.11.2026 12:38:40.601  MMC: дочерние окна консоли:
+    MDIClient "" PID 2264, 8,82-512,720 (504x638)
+    MMCChildFrm "Local Computer Policy\Computer Configuration\Windows Settings\Security Settings" PID 2264, 0,52-520,728 (520x676)
+    MMCViewWindow "" PID 2264, 8,82-512,697 (504x615)
+    SysListView32 "" PID 2264, 167,82-512,697 (345x615)
+    SysHeader32 "" PID 2264, 169,84-510,108 (341x24)
+    AfxFrameOrView42u "" PID 2264, 512,82-512,697 (0x615)
+    NativeHWNDHost "ActionsPaneView" PID 2264, 512,103-512,697 (0x594)
+    DirectUIHWND "" PID 2264, 512,103-512,697 (0x594)
+    CtrlNotifySink "" PID 2264, 512,103-512,103 (0x0)
+    ScrollBar "" PID 2264, 512,103-512,103 (0x0)
+    CtrlNotifySink "" PID 2264, 512,103-512,103 (0x0)
+    ScrollBar "" PID 2264, 512,103-512,103 (0x0)
+    SysTreeView32 "" PID 2264, 8,82-164,697 (156x615)
+    Static "Account Lockout Policy " PID 2264, 167,82-512,697 (345x615)
+    AMCCustomTab "" PID 2264, 8,82-8,82 (0x0)
+    Edit "0" PID 2264, 8,82-8,82 (0x0)
+    msctls_updown32 "" PID 2264, 8,82-46,101 (38x19)
+    MMCOCXViewWindow "" PID 2264, 167,82-512,697 (345x615)
+    AtlAxWinEx "" PID 2264, 167,82-512,697 (345x615)
+    Shell Embedding "" PID 2264, 167,82-512,697 (345x615)
+    Shell DocObject View "" PID 2264, 167,82-512,697 (345x615)
+    Internet Explorer_Server "" PID 2264, 167,82-512,697 (345x615)
+    msctls_statusbar32 "" PID 2264, 8,697-512,720 (504x23)
+    msctls_progress32 "" PID 2264, 296,701-423,718 (127x17)
+    Static "" PID 2264, 427,701-506,718 (79x17)
+    SizeableRebar "" PID 2264, 8,30-512,82 (504x52)
+    ReBarWindow32 "" PID 2264, 8,30-512,76 (504x46)
+    ToolbarWindow32 "" PID 2264, 10,54-512,76 (502x22)
+    ToolbarWindow32 "" PID 2264, 10,30-512,52 (502x22)
+    AfxWnd42u "" PID 2264, 8,30-65,49 (57x19)
+07.11.2026 12:38:40.609  MMC: видимые узлы дерева (25):
+    "Local Computer Policy"
+    "Computer Configuration"
+    "Software Settings"
+    "Windows Settings"
+    "Name Resolution Policy"
+    "Scripts (Startup/Shutdown)"
+    "Deployed Printers"
+    "Security Settings"
+    "Account Policies"
+    "Password Policy"
+    "Account Lockout Policy"
+    "Local Policies"
+    "Windows Firewall with Advanced Security"
+    "Network List Manager Policies"
+    "Public Key Policies"
+    "Software Restriction Policies"
+    "Application Control Policies"
+    "IP Security Policies on Local Computer"
+    "Advanced Audit Policy Configuration"
+    "Policy-based QoS"
+    "Administrative Templates"
+    "User Configuration"
+    "Software Settings"
+    "Windows Settings"
+    "Administrative Templates"
+07.11.2026 12:38:40.627  Часы: TrayClockWClass 934,730-1009,768, навожу курсор в 971,749
+07.11.2026 12:38:41.195  Часы: подсказка появилась через 501 мс (класс ClockTooltipWindow, 922,692-1021,728)
+07.11.2026 12:38:41.717  Снимок сохранён: Политика блокировки.png
+07.11.2026 12:38:41.814  gpedit: Политика блокировки учётной записи: закрыто
+07.11.2026 12:38:41.871  MMC: файл вида консоли удалён (до запуска его не было)
+07.11.2026 12:38:41.871  Сценарий acc_policy1: успешно за 4717 мс
+07.11.2026 12:38:41.968  Система: закрыто
+07.11.2026 12:38:41.968  === Завершено: снято 3 из 3, код 0

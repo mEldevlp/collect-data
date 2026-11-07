@@ -3,6 +3,7 @@
 #include "common.h"
 #include "console.h"
 #include "log.h"
+#include "mmc.h"
 #include "scroll.h"
 #include "wnd.h"
 #include <commctrl.h>   // PSM_SETCURSEL, PSM_GETTABCONTROL, TCM_GETITEMCOUNT - только константы
@@ -489,6 +490,76 @@ static BOOL run_time_sync(const SCEN_CONTEXT *context, const SCENARIO *scenario)
     return ok && typed;
 }
 
+// gpedit.msc (MMC)
+
+#define GPEDIT_OPEN_TIMEOUT_MS   30000  // mmc.exe на XP запускается медленно
+#define MMC_ATTACH_TIMEOUT_MS    15000  // появление дерева и корневого узла
+#define MMC_EXPAND_TIMEOUT_MS    5000   // раскрытие одного узла (ленивая загрузка узлов MMC)
+#define MMC_LIST_TIMEOUT_MS      15000  // заполнение правой панели
+
+// Окна сценариев gpedit в порядке подъёма наверх (последнее - самое верхнее)
+enum
+{
+    GPEDIT_SYSINFO_WINDOW,
+    GPEDIT_WINDOW,
+    GPEDIT_WINDOW_COUNT
+};
+
+// Открыть gpedit, пройти путь к узлу политики и снять экран. Снимок делается, только когда узел
+// выбран и правая панель заполнена; иначе (узел не найден) сценарий пропускается.
+static BOOL run_gpedit_policy(const SCEN_CONTEXT *context, const SCENARIO *scenario, const NAMES_PATH *path)
+{
+    HWND windows[GPEDIT_WINDOW_COUNT];
+    MMC mmc;
+    BOOL ok = FALSE;
+
+    HWND sysinfo = scen_sysinfo(context);
+    HWND frame = mmc_open_console(L"gpedit", scenario->title, GPEDIT_OPEN_TIMEOUT_MS);
+
+    if (!frame) return FALSE;
+
+    wnd_layout(frame, sysinfo, NULL);
+
+    if (mmc_attach(&mmc, frame, MMC_ATTACH_TIMEOUT_MS))
+    {
+        if (mmc_select_path(&mmc, path, MMC_EXPAND_TIMEOUT_MS))
+        {
+            mmc_show_result_list(&mmc, MMC_LIST_TIMEOUT_MS);
+
+            if (context->dump) mmc_dump(&mmc);
+
+            windows[GPEDIT_SYSINFO_WINDOW] = sysinfo;
+            windows[GPEDIT_WINDOW] = frame;
+            ok = scen_shoot(context, scenario->file_name, windows, GPEDIT_WINDOW_COUNT);
+        }
+        else if (context->dump)
+        {
+            mmc_dump(&mmc);
+        }
+    }
+
+    mmc_detach(&mmc);
+
+    if (!context->keep) wnd_close(frame);
+
+    return ok;
+}
+
+static BOOL run_audit_policy(const SCEN_CONTEXT *context, const SCENARIO *scenario)
+{
+    return run_gpedit_policy(context, scenario, &g_names_audit_policy);
+}
+
+static BOOL run_password_policy(const SCEN_CONTEXT *context, const SCENARIO *scenario)
+{
+    return run_gpedit_policy(context, scenario, &g_names_password_policy);
+}
+
+static BOOL run_lockout_policy(const SCEN_CONTEXT *context, const SCENARIO *scenario)
+{
+    return run_gpedit_policy(context, scenario, &g_names_lockout_policy);
+}
+
 // Имена файлов - как в ручных скриншотах NEVSKA03. Список ПО - постранично:
 // "Установленное ПО_1.png", "_2" и т. д. (%d - номер страницы).
 // Поля: имя для /only, имя файла, описание, служебный (только по /only), функция сценария.
@@ -497,11 +568,11 @@ const SCENARIO g_scenarios[] =
     { L"Ustanovlennoe_PO", L"Установленное ПО_%d.png",
       L"Установленное ПО (appwiz.cpl), постранично", FALSE, run_installed_software },
     { L"audit_base", L"Аудит.png",
-      L"gpedit: Локальные политики - Политика аудита", FALSE, NULL },
+      L"gpedit: Локальные политики - Политика аудита", FALSE, run_audit_policy },
     { L"password_policy", L"Политика паролей.png",
-      L"gpedit: Политики учётных записей - Политика паролей", FALSE, NULL },
+      L"gpedit: Политики учётных записей - Политика паролей", FALSE, run_password_policy },
     { L"acc_policy1", L"Политика блокировки.png",
-      L"gpedit: Политика блокировки учётной записи", FALSE, NULL },
+      L"gpedit: Политика блокировки учётной записи", FALSE, run_lockout_policy },
     { L"sync_time", L"sync_time.png",
       L"Синхронизация времени: cmd (w32tm / net time), XP - \"Дата и время\"", FALSE, run_time_sync },
     { L"users_list", L"user_list.png",
