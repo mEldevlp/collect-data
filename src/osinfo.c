@@ -1,7 +1,14 @@
 #include "osinfo.h"
+#include "buffer.h"
 #include "common.h"
 #include "log.h"
 #include <lmcons.h>     // UNLEN - наибольшая длина имени пользователя
+#include <iphlpapi.h>   // MIB_IPFORWARDTABLE, MIB_IPADDRTABLE - только типы (iphlpapi.dll подгружаем сами)
+
+// Основной IPv4-адрес
+#define IPV4_OCTET_COUNT     4
+#define LOOPBACK_FIRST_OCTET 127    // 127.x.x.x - петля, не адрес компьютера в сети
+#define TABLE_READ_ATTEMPTS  3      // таблица может вырасти между запросом размера и чтением
 
 // Значения DPI_AWARENESS_CONTEXT из SDK Windows 10 (в SDK 7.1A для XP их ещё нет)
 #define DPI_CONTEXT_PER_MONITOR_AWARE_V2 ((HANDLE)(INT_PTR)-4)     // Windows 10 1703+
@@ -251,4 +258,162 @@ BOOL os_can_capture(WCHAR *reason, int reason_cch)
     }
 
     return TRUE;
+}
+
+// Основной IPv4-адрес (iphlpapi.dll подгружаем сами: список статических импортов exe не меняется)
+
+typedef DWORD (WINAPI *PFN_GetIpForwardTable)(PMIB_IPFORWARDTABLE, PULONG, BOOL);
+typedef DWORD (WINAPI *PFN_GetIpAddrTable)(PMIB_IPADDRTABLE, PULONG, BOOL);
+
+// Чтение таблицы iphlpapi в память table, размер - в size (in/out)
+typedef DWORD (*TABLE_READER)(void *table, ULONG *size);
+
+static PFN_GetIpForwardTable g_get_ip_forward_table = NULL;
+static PFN_GetIpAddrTable    g_get_ip_addr_table = NULL;
+
+// Подгрузить iphlpapi один раз. FALSE - функций нет.
+static BOOL ensure_iphlpapi(void)
+{
+    static BOOL tried = FALSE;
+
+    if (tried) return g_get_ip_forward_table && g_get_ip_addr_table;
+
+    tried = TRUE;
+
+    HMODULE iphlpapi = LoadLibraryW(L"iphlpapi.dll");
+
+    if (iphlpapi)
+    {
+        g_get_ip_forward_table = (PFN_GetIpForwardTable)GetProcAddress(iphlpapi, "GetIpForwardTable");
+        g_get_ip_addr_table = (PFN_GetIpAddrTable)GetProcAddress(iphlpapi, "GetIpAddrTable");
+    }
+
+    return g_get_ip_forward_table && g_get_ip_addr_table;
+}
+
+static DWORD read_forward_table(void *table, ULONG *size)
+{
+    // упорядоченная таблица - в том же порядке, что и "route print" (Win11 с двумя шлюзами: совпало)
+    return g_get_ip_forward_table((PMIB_IPFORWARDTABLE)table, size, TRUE);
+}
+
+static DWORD read_address_table(void *table, ULONG *size)
+{
+    return g_get_ip_addr_table((PMIB_IPADDRTABLE)table, size, FALSE);
+}
+
+// Таблица целиком в table (выделяется здесь, освобождать buffer_destroy). FALSE - не прочитать.
+static BOOL read_table(TABLE_READER reader, BUFFER *table)
+{
+    ULONG size = 0;
+
+    buffer_init(table, 0);
+
+    for (int attempt = 0; attempt < TABLE_READ_ATTEMPTS; attempt++)
+    {
+        DWORD result = reader(table->data, &size);
+
+        if (result == NO_ERROR && table->data) return TRUE;
+        if (result != ERROR_INSUFFICIENT_BUFFER && result != NO_ERROR) break;
+
+        buffer_destroy(table);
+
+        if (buffer_init(table, size) != BUFFER_OK) break;
+    }
+
+    buffer_destroy(table);
+
+    return FALSE;
+}
+
+// Интерфейс первого маршрута по умолчанию (0.0.0.0/0) - как первая такая строка "route print" у
+// collect_audit.cmd (не по метрике: при VPN маршрут с наименьшей метрикой ведёт в туннель, а нужен адрес
+// компьютера в его сети). FALSE - такого маршрута нет.
+static BOOL default_route_interface(DWORD *interface_index)
+{
+    BUFFER table = { 0 };
+    BOOL found = FALSE;
+
+    if (!read_table(read_forward_table, &table)) return FALSE;
+
+    const MIB_IPFORWARDTABLE *routes = table.data;
+
+    for (DWORD i = 0; i < routes->dwNumEntries && !found; i++)
+    {
+        const MIB_IPFORWARDROW *route = &routes->table[i];
+
+        if (route->dwForwardDest != 0 || route->dwForwardMask != 0) continue;
+
+        *interface_index = route->dwForwardIfIndex;
+        found = TRUE;
+    }
+
+    buffer_destroy(&table);
+
+    return found;
+}
+
+// Адрес годится: не 0.0.0.0 и не 127.x.x.x (адрес в таблице - в порядке байтов сети).
+static BOOL usable_address(DWORD address)
+{
+    const BYTE *octets = (const BYTE *)&address;
+
+    return address != 0 && octets[0] != LOOPBACK_FIRST_OCTET;
+}
+
+// Первый годный адрес интерфейса interface_index (NULL - любого интерфейса). FALSE - такого нет.
+static BOOL find_address(const MIB_IPADDRTABLE *addresses, const DWORD *interface_index, DWORD *address)
+{
+    for (DWORD i = 0; i < addresses->dwNumEntries; i++)
+    {
+        const MIB_IPADDRROW *row = &addresses->table[i];
+
+        if (interface_index && row->dwIndex != *interface_index) continue;
+        if (!usable_address(row->dwAddr)) continue;
+
+        *address = row->dwAddr;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static void format_ipv4(DWORD address, WCHAR *text, int text_cch)
+{
+    const BYTE *octets = (const BYTE *)&address;
+    int length = 0;
+
+    text[0] = 0;
+
+    for (int i = 0; i < IPV4_OCTET_COUNT && length >= 0; i++)
+    {
+        int added = format_text(text + length, text_cch - length, L"%s%u", i > 0 ? L"." : L"", octets[i]);
+
+        length = added < 0 ? -1 : length + added;
+    }
+}
+
+BOOL os_primary_ipv4(WCHAR *text, int text_cch)
+{
+    BUFFER table = { 0 };
+    DWORD route_interface = 0;
+    DWORD address = 0;
+
+    text[0] = 0;
+
+    if (!ensure_iphlpapi()) return FALSE;
+
+    BOOL has_route = default_route_interface(&route_interface);
+
+    if (!read_table(read_address_table, &table)) return FALSE;
+
+    const MIB_IPADDRTABLE *addresses = table.data;
+    BOOL found = (has_route && find_address(addresses, &route_interface, &address)) ||
+                 find_address(addresses, NULL, &address);
+
+    buffer_destroy(&table);
+
+    if (found) format_ipv4(address, text, text_cch);
+
+    return found;
 }

@@ -12,6 +12,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Vm,
     [string]$ScrArgs = '/only:test',
     [string]$Prep = '',              # .cmd, который run.cmd выполнит в госте перед утилитой (тестовые данные)
+    [switch]$DefaultDir,             # запуск без папки результатов: утилита сама создаёт <ИМЯ_ПК>_<IP> рядом с exe
     [switch]$Trial,                 # пробная сборка из obj\v145 (не для XP)
     [string]$ExeDir = '',            # где взять screens_x86/x64.exe; по умолчанию ..\..\bin
     [switch]$NoRestore,              # не откатывать к clean (ВМ уже запущена/подготовлена)
@@ -56,6 +57,10 @@ foreach ($e in 'screens_x86.exe', 'screens_x64.exe') {
     if (Test-Path $src) { Copy-Item $src $share -Force } else { Log "Нет $src" }
 }
 Set-Content -Path (Join-Path $share 'args.txt') -Value $ScrArgs -Encoding Ascii
+# флаг для run.cmd: запускать утилиту без папки результатов
+$defaultDirFlag = Join-Path $share 'defaultdir.txt'
+if ($DefaultDir) { Set-Content -Path $defaultDirFlag -Value 'default' -Encoding Ascii; Log 'Запуск без папки результатов' }
+elseif (Test-Path $defaultDirFlag) { Remove-Item $defaultDirFlag -Force }
 $prepDst = Join-Path $share 'prep.cmd'
 if ($Prep) { Copy-Item $Prep $prepDst -Force; Log "Подготовка в госте: $Prep" } elseif (Test-Path $prepDst) { Remove-Item $prepDst -Force }
 $guestRes = Join-Path $share 'results'

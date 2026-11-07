@@ -24,9 +24,24 @@ copy /y "%SH%\%EXE%" "%W%\" >nul
 rem подготовка тестовых данных (vm_test.ps1 -Prep)
 if exist "%SH%\prep.cmd" call "%SH%\prep.cmd" > "%R%\_prep.txt" 2>&1
 
+rem defaultdir.txt (vm_test.ps1 -DefaultDir) - без папки результатов: утилита сама создаёт
+rem <ИМЯ_ПК>_<IP> рядом с exe; её содержимое и имя (_folder.txt) переносятся в out
+if exist "%SH%\defaultdir.txt" goto :run_default
 echo run: %EXE% "%W%\out" %ARGS%
 "%W%\%EXE%" "%W%\out" %ARGS% > "%W%\out\_stdout.txt" 2>&1
 set "RC=%ERRORLEVEL%"
+goto :results
+
+:run_default
+echo run: %EXE% %ARGS%
+"%W%\%EXE%" %ARGS% > "%W%\out\_stdout.txt" 2>&1
+set "RC=%ERRORLEVEL%"
+for /d %%D in ("%W%\*_*") do (
+    copy /y "%%D\*.*" "%W%\out\" >nul
+    >> "%W%\out\_folder.txt" echo %%~nxD
+)
+
+:results
 echo exit code: %RC%
 
 copy /y "%W%\out\*.*" "%R%\" >nul

@@ -61,6 +61,13 @@
 #define PROCESS_EXIT_WAIT_MS    3000    // наш процесс (rundll32 и т. п.) должен выйти сам после закрытия окна
 #define CURSOR_RESTORE_DELAY_MS 200     // аварийно: дать основному потоку закончить движение курсора
 
+// Поиск дочернего окна по классу: условие и результат для find_by_class_proc
+typedef struct
+{
+    const WCHAR *class_name;
+    HWND         found;
+} CLASS_SEARCH;
+
 // Поиск нового окна: условия и результат для new_window_enum_proc
 typedef struct
 {
@@ -190,6 +197,32 @@ void wnd_describe(HWND window, WCHAR *description, int description_cch)
     format_text(description, description_cch, L"%s \"%s\" PID %lu, %d,%d-%d,%d (%dx%d)", class_name, title,
                 process_id, rect.left, rect.top, rect.right, rect.bottom, rect.right - rect.left,
                 rect.bottom - rect.top);
+}
+
+static BOOL CALLBACK find_by_class_proc(HWND window, LPARAM param)
+{
+    CLASS_SEARCH *search = (CLASS_SEARCH *)param;
+    WCHAR class_name[CLASS_NAME_CCH];
+
+    if (GetClassNameW(window, class_name, CLASS_NAME_CCH) && lstrcmpiW(class_name, search->class_name) == 0)
+    {
+        search->found = window;
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+// EnumChildWindows обходит всех потомков (не только прямых детей).
+HWND wnd_find_descendant(HWND parent, const WCHAR *class_name)
+{
+    CLASS_SEARCH search;
+
+    search.class_name = class_name;
+    search.found = NULL;
+    EnumChildWindows(parent, find_by_class_proc, (LPARAM)&search);
+
+    return search.found;
 }
 
 // Поиск нового окна
@@ -861,6 +894,20 @@ void wnd_raise(HWND *windows, int count)
     {
         log_msg(L"Внимание: не удалось сделать окно активным (оно поверх всех, но заголовок может быть неактивным)");
     }
+
+    // порядок ещё раз, сверху вниз: каждое окно - сразу под следующим. Win7: после активации консоли MMC
+    // её окна свойств (у каждого свой владелец MMCDataWindow) оказывались ниже и в обратном порядке, а
+    // "Система" (explorer) не становилась "поверх всех"; окно, поставленное под окном "поверх всех",
+    // тоже становится "поверх всех"
+    HWND above = last;
+
+    for (int i = count - 1; i >= 0; i--)
+    {
+        if (!movable(windows[i]) || windows[i] == last) continue;
+
+        SetWindowPos(windows[i], above, 0, 0, 0, 0, SWP_ZORDER_ONLY);
+        above = windows[i];
+    }
 }
 
 void wnd_unraise(HWND *windows, int count)
@@ -871,6 +918,45 @@ void wnd_unraise(HWND *windows, int count)
     for (int i = 0; i < count; i++)
     {
         if (movable(windows[i])) SetWindowPos(windows[i], HWND_NOTOPMOST, 0, 0, 0, 0, SWP_ZORDER_ONLY);
+    }
+}
+
+// Место окна верхнего уровня в Z-порядке (0 - самое верхнее). -1 - не найдено.
+static int z_position(HWND window)
+{
+    int position = 0;
+
+    for (HWND current = GetTopWindow(NULL); current; current = GetWindow(current, GW_HWNDNEXT))
+    {
+        if (current == window) return position;
+
+        position++;
+    }
+
+    return -1;
+}
+
+void wnd_log_z_order(HWND *windows, int count)
+{
+    WCHAR description[TEXT_BUFFER_CCH];
+    WCHAR owner_description[TEXT_BUFFER_CCH];
+
+    log_msg(L"Порядок окон (z: 0 - самое верхнее):");
+
+    for (int i = 0; i < count; i++)
+    {
+        if (!windows[i]) continue;
+
+        HWND owner = GetWindow(windows[i], GW_OWNER);
+        BOOL topmost = (GetWindowLongW(windows[i], GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+
+        wnd_describe(windows[i], description, TEXT_BUFFER_CCH);
+
+        if (owner) wnd_describe(owner, owner_description, TEXT_BUFFER_CCH);
+        else lstrcpyW(owner_description, L"нет");
+
+        log_raw(L"    %d: z %d%s%s, %s; владелец: %s", i, z_position(windows[i]), topmost ? L", поверх всех" : L"",
+                IsHungAppWindow(windows[i]) ? L", НЕ ОТВЕЧАЕТ" : L"", description, owner_description);
     }
 }
 

@@ -7,7 +7,8 @@ param(
     [string]$ScrArgs = '/only:test',
     [string]$Prep = '',
     [string]$Resolution = '1024x768',
-    [string]$LogFile = ''
+    [string]$LogFile = '',
+    [switch]$DefaultDir             # запуск без папки результатов (см. vm_test.ps1)
 )
 # иначе PowerShell 5.1 отдаёт кириллицу в канал в кодировке консоли, и grep её не находит
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
@@ -20,6 +21,7 @@ foreach ($vm in ($Vms -split ',')) {
     try {
         $a = @{ Vm = $vm; ScrArgs = $ScrArgs; Resolution = $Resolution }
         if ($Prep) { $a.Prep = $Prep }
+        if ($DefaultDir) { $a.DefaultDir = $true }
         & $t @a *>&1 | ForEach-Object { Out2 "$_" }
     } catch {
         Out2 "=== $vm EXCEPTION: $_"

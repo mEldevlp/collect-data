@@ -27,6 +27,13 @@ extern const NAMES_PATH g_names_audit_policy;       // ... - Локальные 
 extern const NAMES_PATH g_names_password_policy;    // ... - Политики учётных записей - Политика паролей
 extern const NAMES_PATH g_names_lockout_policy;     // ... - Политики учётных записей - Политика блокировки
 
+// lusrmgr.msc: Локальные пользователи и группы (локально) - ...
+extern const NAMES_PATH g_names_local_users;        // ... - Пользователи
+extern const NAMES_PATH g_names_local_groups;       // ... - Группы
+
+// Кнопка "Показать/скрыть область действий" на панели инструментов MMC 3.0
+extern const NAMES_NODE g_names_action_pane_button;
+
 // Совпадает ли text с одним из вариантов узла. prefix_allowed - достаточно, чтобы text начинался
 // с варианта.
 BOOL names_match(const WCHAR *text, const NAMES_NODE *node, BOOL prefix_allowed);

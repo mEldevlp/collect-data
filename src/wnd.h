@@ -29,6 +29,9 @@ void wnd_title(HWND window, WCHAR *title, int title_cch);
 // Строка "класс \"заголовок\" PID n, x,y-x,y (ШxВ)" для журнала.
 void wnd_describe(HWND window, WCHAR *description, int description_cch);
 
+// Первое дочернее окно класса class_name на любой глубине (не только прямые дети). NULL - нет.
+HWND wnd_find_descendant(HWND parent, const WCHAR *class_name);
+
 // Запуск и ожидание
 
 // Запустить командную строку и дождаться НОВОГО видимого окна верхнего уровня.
@@ -71,6 +74,10 @@ void wnd_raise(HWND *windows, int count);
 
 // Снять "поверх всех".
 void wnd_unraise(HWND *windows, int count);
+
+// /dump: окна windows - в журнал: место в Z-порядке (0 - самое верхнее окно), "поверх всех",
+// "не отвечает" и окно-владелец.
+void wnd_log_z_order(HWND *windows, int count);
 
 // Закрытие
 

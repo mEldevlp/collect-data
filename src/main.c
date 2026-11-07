@@ -1,10 +1,12 @@
-// screens.exe - скриншоты для collect_audit.cmd.
-// screens.exe <папка_результатов> [/only:имя1,имя2] [/list] [/keep] [/dump] [/timeout:сек] [/primary]
+// screens.exe - скриншоты для аудита ИБ.
+// screens.exe [папка_результатов] [/only:имя1,имя2] [/list] [/keep] [/dump] [/timeout:сек] [/primary]
+// Без папки - <папка exe>\<ИМЯ_ПК>_<IP> (нельзя писать - %SystemDrive%\<ИМЯ_ПК>_<IP>), уже есть - туда же.
 // Коды возврата: 0 - все снимки сделаны, 1 - часть не удалась, 2 - снимать нельзя / ошибка запуска.
 
 #include <windows.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 #include "common.h"
 #include "console.h"
 #include "log.h"
@@ -30,6 +32,14 @@
 
 #define DRIVE_ROOT_LENGTH 3         // "C:\" - у корня диска завершающий \ не убираем
 
+// Папка результатов по умолчанию: <ИМЯ_ПК>_<IP>, как у collect_audit.cmd
+#define NO_IP_TEXT       L"noip"                    // адреса IPv4 нет
+#define FOLDER_NAME_CCH  (MAX_COMPUTERNAME_LENGTH + 1 + OS_IPV4_TEXT_CCH)
+#define WRITE_TEST_FILE  L"_проверка_записи.tmp"    // создаётся и сразу удаляется: можно ли писать в папку
+
+// Пауза в конце: чтобы отличить "к консоли подключены только мы" от "мы и cmd", хватает двух мест
+#define CONSOLE_PROCESS_PROBE 2
+
 // Параметры командной строки
 typedef struct
 {
@@ -49,11 +59,13 @@ static DWORD  g_timeout_sec = DEFAULT_TIMEOUT_SEC;
 
 static void usage(void)
 {
-    log_raw(L"screens.exe %s - снимки экрана для collect_audit.cmd", SCREENS_VERSION);
+    log_raw(L"screens.exe %s - снимки экрана для аудита ИБ", SCREENS_VERSION);
     log_raw(L"");
-    log_raw(L"  screens.exe <папка> [/only:имя1,имя2] [/list] [/keep] [/dump] [/timeout:сек] [/wait:сек] [/pages:N] "
+    log_raw(L"  screens.exe [папка] [/only:имя1,имя2] [/list] [/keep] [/dump] [/timeout:сек] [/wait:сек] [/pages:N] "
             L"[/primary]");
     log_raw(L"");
+    log_raw(L"  папка        куда класть снимки; без неё - <ИМЯ_ПК>_<IP> рядом с exe (если там писать нельзя -");
+    log_raw(L"               на системном диске); папка уже есть - снимки кладутся в неё");
     log_raw(L"  /only:...    снять только указанные сценарии (имена - см. /list)");
     log_raw(L"  /list        список сценариев");
     log_raw(L"  /keep        не закрывать открытые окна (отладка)");
@@ -172,6 +184,131 @@ static void full_results_dir(const WCHAR *results_dir, WCHAR *full_path, int ful
     WCHAR last = path_length > 0 ? full_path[path_length - 1] : 0;
 
     if (path_length > DRIVE_ROOT_LENGTH && (last == L'\\' || last == L'/')) full_path[path_length - 1] = 0;
+}
+
+// Имя папки результатов по умолчанию: <ИМЯ_ПК>_<IP> - как %COMPUTERNAME%_%IP% у collect_audit.cmd.
+static void default_folder_name(WCHAR *name, int name_cch)
+{
+    WCHAR computer[MAX_COMPUTERNAME_LENGTH + 1];
+    WCHAR address[OS_IPV4_TEXT_CCH];
+    DWORD computer_cch = (DWORD)ARRAY_COUNT(computer);
+    DWORD length = GetEnvironmentVariableW(L"COMPUTERNAME", computer, computer_cch);
+
+    if (length == 0 || length >= computer_cch)
+    {
+        computer_cch = (DWORD)ARRAY_COUNT(computer);
+
+        if (!GetComputerNameW(computer, &computer_cch)) lstrcpyW(computer, L"PC");
+    }
+
+    if (!os_primary_ipv4(address, OS_IPV4_TEXT_CCH)) lstrcpyW(address, NO_IP_TEXT);
+
+    format_text(name, name_cch, L"%s_%s", computer, address);
+}
+
+// Папка, где лежит сам exe (а не текущая: при "Запуск от имени администратора" текущая - system32).
+// Для exe в корне диска - "C:" (к ней добавляется "\имя"). FALSE - не узнать.
+static BOOL exe_dir(WCHAR *dir, int dir_cch)
+{
+    DWORD length = GetModuleFileNameW(NULL, dir, (DWORD)dir_cch);
+
+    if (length == 0 || length >= (DWORD)dir_cch) return FALSE;
+
+    WCHAR *last_slash = wcsrchr(dir, L'\\');
+
+    if (!last_slash) return FALSE;
+
+    *last_slash = 0;
+
+    return TRUE;
+}
+
+// В папке можно создать файл (папка может остаться от прошлого раза на защищённом от записи носителе).
+static BOOL dir_writable(const WCHAR *dir)
+{
+    WCHAR path[PATH_BUFFER_CCH];
+
+    format_text(path, PATH_BUFFER_CCH, L"%s\\%s", dir, WRITE_TEST_FILE);
+
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+
+    if (file == INVALID_HANDLE_VALUE) return FALSE;
+
+    CloseHandle(file);
+
+    return TRUE;
+}
+
+// Папка есть (создана) и в неё можно писать. FALSE - GetLastError объясняет почему.
+static BOOL prepare_dir(const WCHAR *dir)
+{
+    return ensure_dir(dir) && dir_writable(dir);
+}
+
+// Папка результатов, когда она не указана: <папка exe>\<ИМЯ_ПК>_<IP>; там писать нельзя -
+// %SystemDrive%\<ИМЯ_ПК>_<IP> (в note - что взята запасная папка и почему). Папка уже есть - она же.
+// FALSE - не годится ни одна (причина на экране).
+static BOOL choose_default_dir(WCHAR *results_dir, int results_dir_cch, WCHAR *note, int note_cch)
+{
+    WCHAR name[FOLDER_NAME_CCH];
+    WCHAR base[PATH_BUFFER_CCH];
+    WCHAR system_drive[MAX_PATH];
+    WCHAR error_text[TEXT_BUFFER_CCH];
+
+    note[0] = 0;
+    default_folder_name(name, FOLDER_NAME_CCH);
+
+    if (exe_dir(base, PATH_BUFFER_CCH))
+    {
+        format_text(results_dir, results_dir_cch, L"%s\\%s", base, name);
+
+        if (prepare_dir(results_dir)) return TRUE;
+
+        format_text(note, note_cch, L"рядом с exe писать нельзя (%s: %s), взята папка на системном диске",
+                    results_dir, log_errtext(GetLastError(), error_text, TEXT_BUFFER_CCH));
+    }
+
+    DWORD length = GetEnvironmentVariableW(L"SystemDrive", system_drive, MAX_PATH);
+
+    if (length == 0 || length >= MAX_PATH) lstrcpyW(system_drive, L"C:");
+
+    format_text(results_dir, results_dir_cch, L"%s\\%s", system_drive, name);
+
+    if (prepare_dir(results_dir)) return TRUE;
+
+    log_raw(L"Не удалось создать папку %s или записать в неё: %s", results_dir,
+            log_errtext(GetLastError(), error_text, TEXT_BUFFER_CCH));
+
+    return FALSE;
+}
+
+// Консоль создана для нас (запуск из Проводника, "Запуск от имени администратора"): кроме нас к ней
+// никто не подключён, и окно закроется сразу по выходе. Из cmd и других программ - FALSE.
+static BOOL own_console(void)
+{
+    DWORD process_ids[CONSOLE_PROCESS_PROBE];
+
+    return GetConsoleProcessList(process_ids, CONSOLE_PROCESS_PROBE) == 1;
+}
+
+// Ждать нажатия клавиши (только на экран: журнал к этому времени закрыт).
+static void wait_key(void)
+{
+    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+    INPUT_RECORD record;
+    DWORD read_count = 0;
+
+    log_raw(L"");
+    log_raw(L"Нажмите любую клавишу, чтобы закрыть окно...");
+
+    // нажатия во время работы утилиты не в счёт
+    FlushConsoleInputBuffer(input);
+
+    while (ReadConsoleInputW(input, &record, 1, &read_count) && read_count > 0)
+    {
+        if (record.EventType == KEY_EVENT && record.Event.KeyEvent.bKeyDown) break;
+    }
 }
 
 // Число из ключа "/имя:N": больше 0 и не больше max_value - в *value, иначе значение не меняется.
@@ -317,21 +454,36 @@ static int run_scenarios(const SCEN_CONTEXT *context, const WCHAR *only, int *to
     return succeeded;
 }
 
-int wmain(int argc, WCHAR **argv)
+// Папка результатов: указанная в командной строке (создаётся, если её нет) или по умолчанию
+// (choose_default_dir). note - что записать в журнал о выборе папки. FALSE - папки нет (причина на экране).
+static BOOL prepare_results_dir(const OPTIONS *options, WCHAR *results_dir, WCHAR *note, int note_cch)
+{
+    WCHAR error_text[TEXT_BUFFER_CCH];
+
+    note[0] = 0;
+
+    if (!options->results_dir) return choose_default_dir(results_dir, PATH_BUFFER_CCH, note, note_cch);
+
+    full_results_dir(options->results_dir, results_dir, PATH_BUFFER_CCH);
+
+    if (ensure_dir(results_dir)) return TRUE;
+
+    log_raw(L"Не удалось создать папку %s: %s", results_dir, log_errtext(GetLastError(), error_text, TEXT_BUFFER_CCH));
+
+    return FALSE;
+}
+
+// Вся работа утилиты (кроме служебного запуска помощника). Возвращает код выхода.
+static int run(int argc, WCHAR **argv)
 {
     OPTIONS options;
     WCHAR results_dir[PATH_BUFFER_CCH];
+    WCHAR note[MESSAGE_BUFFER_CCH];
     WCHAR reason[MESSAGE_BUFFER_CCH];
     WCHAR error_text[TEXT_BUFFER_CCH];
     OSINFO os_info;
     SCEN_CONTEXT context;
     int total = 0;
-
-    // до любых GetSystemMetrics: иначе на Win10 с масштабом > 100% размеры экрана занижены
-    os_set_dpi_aware();
-
-    // служебный запуск: помощник для окна cmd (см. console.h) - без журнала и проверок
-    if (con_is_helper(argc, argv)) return con_helper_main(argc, argv);
 
     int parse_result = parse_arguments(argc, argv, &options);
 
@@ -343,20 +495,7 @@ int wmain(int argc, WCHAR **argv)
         return EXIT_OK;
     }
 
-    if (!options.results_dir)
-    {
-        usage();
-        return EXIT_CANNOT;
-    }
-
-    full_results_dir(options.results_dir, results_dir, PATH_BUFFER_CCH);
-
-    if (!ensure_dir(results_dir))
-    {
-        log_raw(L"Не удалось создать папку %s: %s", results_dir,
-                log_errtext(GetLastError(), error_text, TEXT_BUFFER_CCH));
-        return EXIT_CANNOT;
-    }
+    if (!prepare_results_dir(&options, results_dir, note, MESSAGE_BUFFER_CCH)) return EXIT_CANNOT;
 
     if (!log_open(results_dir))
     {
@@ -366,6 +505,10 @@ int wmain(int argc, WCHAR **argv)
 
     log_raw(L"");
     log_msg(L"=== screens.exe %s, запуск: %s", SCREENS_VERSION, GetCommandLineW());
+    log_msg(L"Папка результатов: %s", results_dir);
+
+    if (note[0]) log_msg(L"Внимание: %s", note);
+
     os_get(&os_info);
     os_log(&os_info);
 
@@ -415,6 +558,23 @@ int wmain(int argc, WCHAR **argv)
 
     log_msg(L"=== Завершено: снято %d из %d, код %d", succeeded, total, exit_code);
     log_close();
+
+    return exit_code;
+}
+
+int wmain(int argc, WCHAR **argv)
+{
+    // до любых GetSystemMetrics: иначе на Win10 с масштабом > 100% размеры экрана занижены
+    os_set_dpi_aware();
+
+    // служебный запуск: помощник для окна cmd (см. console.h) - без журнала и проверок
+    if (con_is_helper(argc, argv)) return con_helper_main(argc, argv);
+
+    // запуск из Проводника: окно консоли наше и закроется сразу - итог должен успеть прочитать человек
+    BOOL pause_at_exit = own_console();
+    int exit_code = run(argc, argv);
+
+    if (pause_at_exit) wait_key();
 
     return exit_code;
 }

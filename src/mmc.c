@@ -1,14 +1,14 @@
-// Консоль MMC через специальные возможности Windows (MSAA). См. mmc.h.
+// Консоль MMC через специальные возможности Windows (MSAA, acc.c). См. mmc.h.
 #include "mmc.h"
+#include "acc.h"
 #include "buffer.h"
 #include "common.h"
 #include "log.h"
 #include "wnd.h"
-#define COBJMACROS
-#include <oleacc.h>
 #include <commctrl.h>
+#include <string.h>
 
-// Название узла дерева. Узлы gpedit короче; более длинное обрежется.
+// Название узла дерева для журнала (варианты через " / "). Более длинное обрежется.
 #define NODE_NAME_CCH 260
 
 // Поиск корня дерева и раскрытие узлов
@@ -16,296 +16,33 @@
 #define EXPAND_POLL_MS      250     // пауза между нажатиями "вправо" при раскрытии узла
 
 // Список результатов
-#define LIST_STABLE_MS       1500   // число строк не менялось столько - список заполнен
-#define LIST_POLL_MS         200
-#define LIST_SCROLLBAR_GUARD 24     // запас на вертикальную полосу прокрутки при подгонке столбцов
-#define LIST_COLUMN_MIN_PX   80     // столбец названия не сужаем меньше этого
-#define LIST_COLUMNS         2      // в политиках безопасности два столбца: название и значение
-#define LIST_VALUE_COLUMN    1      // столбец значения - второй, его показываем целиком
-
-// COINIT_APARTMENTTHREADED из objbase.h (ole32 подгружаем сами - значение берём явно)
-#define COINIT_APARTMENTTHREADED_VALUE 2
-
-// Узел дерева для MSAA: объект IAccessible и номер элемента внутри него. Обычный узел - это сам
-// объект (child = CHILDID_SELF); иногда узел возвращается как "простой" элемент родителя (child > 0).
-typedef struct
-{
-    IAccessible *accessible;
-    long         child;
-} ACC_ITEM;
-
-// IID_IAccessible задаём сами, чтобы не тянуть uuid.lib (и не добавлять статический импорт).
-static const GUID IID_IAccessible_local =
-    { 0x618736E0, 0x3C3D, 0x11CF, { 0x81, 0x0C, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71 } };
-
-typedef HRESULT (WINAPI *PFN_AccessibleObjectFromWindow)(HWND, DWORD, REFIID, void **);
-typedef HRESULT (WINAPI *PFN_AccessibleChildren)(IAccessible *, LONG, LONG, VARIANT *, LONG *);
-typedef HRESULT (WINAPI *PFN_CoInitializeEx)(LPVOID, DWORD);
-typedef void    (WINAPI *PFN_CoUninitialize)(void);
-typedef void    (WINAPI *PFN_SysFreeString)(BSTR);
-
-static PFN_AccessibleObjectFromWindow g_accessible_object_from_window = NULL;
-static PFN_AccessibleChildren         g_accessible_children = NULL;
-static PFN_CoInitializeEx             g_co_initialize_ex = NULL;
-static PFN_CoUninitialize             g_co_uninitialize = NULL;
-static PFN_SysFreeString              g_sys_free_string = NULL;
-static BOOL                           g_oleacc_loaded = FALSE;
-
-// Подгрузить oleacc/ole32/oleaut32 один раз. FALSE - чего-то нет (MSAA недоступна).
-static BOOL ensure_oleacc(void)
-{
-    static BOOL tried = FALSE;
-
-    if (tried) return g_oleacc_loaded;
-
-    tried = TRUE;
-
-    HMODULE oleacc = LoadLibraryW(L"oleacc.dll");
-    HMODULE ole32 = LoadLibraryW(L"ole32.dll");
-    HMODULE oleaut32 = LoadLibraryW(L"oleaut32.dll");
-
-    if (oleacc)
-    {
-        g_accessible_object_from_window =
-            (PFN_AccessibleObjectFromWindow)GetProcAddress(oleacc, "AccessibleObjectFromWindow");
-        g_accessible_children = (PFN_AccessibleChildren)GetProcAddress(oleacc, "AccessibleChildren");
-    }
-
-    if (ole32)
-    {
-        g_co_initialize_ex = (PFN_CoInitializeEx)GetProcAddress(ole32, "CoInitializeEx");
-        g_co_uninitialize = (PFN_CoUninitialize)GetProcAddress(ole32, "CoUninitialize");
-    }
-
-    if (oleaut32) g_sys_free_string = (PFN_SysFreeString)GetProcAddress(oleaut32, "SysFreeString");
-
-    g_oleacc_loaded = g_accessible_object_from_window && g_accessible_children && g_co_initialize_ex &&
-                      g_co_uninitialize && g_sys_free_string;
-
-    if (!g_oleacc_loaded) log_msg(L"MMC: специальные возможности (oleacc) недоступны - дерево не прочитать");
-
-    return g_oleacc_loaded;
-}
-
-// VARIANT
-
-static VARIANT variant_child_id(long child)
-{
-    VARIANT value;
-
-    value.vt = VT_I4;
-    value.lVal = child;
-
-    return value;
-}
-
-static void variant_clear_local(VARIANT *value)
-{
-    if (value->vt == VT_DISPATCH && value->pdispVal) IDispatch_Release(value->pdispVal);
-    else if (value->vt == VT_UNKNOWN && value->punkVal) IUnknown_Release(value->punkVal);
-    else if (value->vt == VT_BSTR && value->bstrVal && g_sys_free_string) g_sys_free_string(value->bstrVal);
-
-    value->vt = VT_EMPTY;
-}
-
-// Узел дерева (ACC_ITEM)
-
-static void acc_item_release(ACC_ITEM *item)
-{
-    if (item->accessible) IAccessible_Release(item->accessible);
-
-    item->accessible = NULL;
-    item->child = CHILDID_SELF;
-}
-
-// Узел из объекта и номера элемента (без составного инициализатора - он на /W4 даёт C4204).
-static ACC_ITEM acc_item_of(IAccessible *accessible, long child)
-{
-    ACC_ITEM item;
-
-    item.accessible = accessible;
-    item.child = child;
-
-    return item;
-}
-
-// Название узла. FALSE - имени нет.
-static BOOL acc_item_name(const ACC_ITEM *item, WCHAR *name, int name_cch)
-{
-    VARIANT self = variant_child_id(item->child);
-    BSTR text = NULL;
-
-    name[0] = 0;
-
-    HRESULT result = IAccessible_get_accName(item->accessible, self, &text);
-
-    if (SUCCEEDED(result) && text) lstrcpynW(name, text, name_cch);
-    if (text && g_sys_free_string) g_sys_free_string(text);
-
-    return name[0] != 0;
-}
-
-// Выделить узел (и, с TAKEFOCUS, передать ему фокус).
-static void acc_item_select(const ACC_ITEM *item, long flags)
-{
-    VARIANT self = variant_child_id(item->child);
-
-    IAccessible_accSelect(item->accessible, flags, self);
-}
-
-// Число раскрытых дочерних узлов (0 - узел свёрнут или листовой).
-static long acc_item_child_count(const ACC_ITEM *item)
-{
-    long count = 0;
-
-    if (item->child != CHILDID_SELF) return 0;
-    if (FAILED(IAccessible_get_accChildCount(item->accessible, &count))) return 0;
-
-    return count < 0 ? 0 : count;
-}
-
-// Дочерние узлы parent в массив items (выделяется здесь, освобождать acc_items_free).
-// Возвращает их число.
-static int acc_item_children(const ACC_ITEM *parent, BUFFER *items)
-{
-    buffer_init(items, 0);
-
-    long count = acc_item_child_count(parent);
-
-    if (count <= 0) return 0;
-
-    BUFFER variants = { 0 };
-
-    if (buffer_init_array(&variants, (size_t)count, sizeof(VARIANT)) != BUFFER_OK) return 0;
-
-    VARIANT *variant_array = variants.data;
-
-    for (long i = 0; i < count; i++) variant_array[i].vt = VT_EMPTY;
-
-    long obtained = 0;
-    HRESULT result = g_accessible_children(parent->accessible, 0, count, variant_array, &obtained);
-
-    if (FAILED(result) || obtained <= 0 ||
-        buffer_init_array(items, (size_t)obtained, sizeof(ACC_ITEM)) != BUFFER_OK)
-    {
-        for (long i = 0; i < count; i++) variant_clear_local(&variant_array[i]);
-
-        buffer_destroy(&variants);
-
-        return 0;
-    }
-
-    ACC_ITEM *item_array = items->data;
-    int item_count = 0;
-
-    for (long i = 0; i < obtained; i++)
-    {
-        if (variant_array[i].vt == VT_DISPATCH && variant_array[i].pdispVal)
-        {
-            IAccessible *child = NULL;
-
-            if (SUCCEEDED(IDispatch_QueryInterface(variant_array[i].pdispVal, &IID_IAccessible_local,
-                                                   (void **)&child)) && child)
-            {
-                item_array[item_count].accessible = child;
-                item_array[item_count].child = CHILDID_SELF;
-                item_count++;
-            }
-        }
-        else if (variant_array[i].vt == VT_I4)
-        {
-            IAccessible_AddRef(parent->accessible);
-            item_array[item_count].accessible = parent->accessible;
-            item_array[item_count].child = variant_array[i].lVal;
-            item_count++;
-        }
-
-        variant_clear_local(&variant_array[i]);
-    }
-
-    buffer_destroy(&variants);
-
-    return item_count;
-}
-
-static void acc_items_free(BUFFER *items, int count)
-{
-    ACC_ITEM *item_array = items->data;
-
-    for (int i = 0; i < count; i++) acc_item_release(&item_array[i]);
-
-    buffer_destroy(items);
-}
-
-// Первый дочерний узел parent в out (с передачей владения). FALSE - детей нет.
-static BOOL acc_first_child(const ACC_ITEM *parent, ACC_ITEM *out)
-{
-    BUFFER items = { 0 };
-    int count = acc_item_children(parent, &items);
-    ACC_ITEM *item_array = items.data;
-    BOOL ok = FALSE;
-
-    if (count > 0)
-    {
-        *out = item_array[0];
-        item_array[0].accessible = NULL;        // владение передали out
-        ok = TRUE;
-    }
-
-    acc_items_free(&items, count);
-
-    return ok;
-}
-
-// Найти среди детей parent узел, подходящий под node, в out (с передачей владения).
-static BOOL acc_find_child(const ACC_ITEM *parent, const NAMES_NODE *node, ACC_ITEM *out)
-{
-    BUFFER items = { 0 };
-    int count = acc_item_children(parent, &items);
-    ACC_ITEM *item_array = items.data;
-    BOOL ok = FALSE;
-
-    for (int i = 0; i < count && !ok; i++)
-    {
-        WCHAR name[NODE_NAME_CCH];
-
-        if (acc_item_name(&item_array[i], name, NODE_NAME_CCH) && names_match(name, node, TRUE))
-        {
-            *out = item_array[i];
-            item_array[i].accessible = NULL;
-            ok = TRUE;
-        }
-    }
-
-    acc_items_free(&items, count);
-
-    return ok;
-}
-
-// Названия всех видимых узлов дерева - в журнал (узел не найден: по ним дополняется словарь names.c).
-// MSAA показывает дерево плоско: видимые узлы - прямые дети клиентской области дерева.
-static void log_visible_nodes(const ACC_ITEM *client)
-{
-    BUFFER items = { 0 };
-    int count = acc_item_children(client, &items);
-    ACC_ITEM *item_array = items.data;
-
-    log_msg(L"MMC: видимые узлы дерева (%d):", count);
-
-    for (int i = 0; i < count; i++)
-    {
-        WCHAR name[NODE_NAME_CCH];
-
-        if (acc_item_name(&item_array[i], name, NODE_NAME_CCH)) log_raw(L"    \"%s\"", name);
-    }
-
-    acc_items_free(&items, count);
-}
-
-// Найти видимый узел по словарю среди прямых детей клиентской области (плоский список видимых узлов).
+#define LIST_STABLE_MS         1500     // число строк не менялось столько - список заполнен
+#define LIST_POLL_MS           200
+#define LIST_SCROLLBAR_GUARD   24       // запас на вертикальную полосу прокрутки при подгонке столбцов
+#define LIST_COLUMN_MIN_PX     80       // столбец названия (gpedit) или остатка (lusrmgr) не уже этого
+#define LIST_VALUE_COLUMN      1        // gpedit: столбец значения - второй, его показываем целиком
+#define LIST_SEARCH_FROM_START (-1)     // LVM_GETNEXTITEM: искать с первой строки
+#define MAX_TEXT_COLUMNS       8        // столбцов "по тексту" (lusrmgr - два: имя и полное имя)
+
+// Окно свойств
+#define SHEET_MESSAGE_TIMEOUT_MS 3000   // сообщение окну свойств: не ответило - считаем зависшим
+
+// Область действий MMC 3.0 (справа): окно NativeHWNDHost со служебным (не переводится) заголовком
+#define ACTION_PANE_CLASS   L"NativeHWNDHost"
+#define ACTION_PANE_TITLE   L"ActionsPaneView"
+#define ACTION_PANE_WAIT_MS 2000        // после нажатия кнопки область прячется не сразу
+#define ACTION_PANE_POLL_MS 100
+#define MAX_TOOLBARS        8           // панелей инструментов в окне MMC две: меню и кнопки
+
+static const WCHAR *const PROPERTIES_CLASSES[] = { WND_DIALOG_CLASS, NULL };
+
+// Видимые узлы дерева
+
+// Найти видимый узел по словарю среди прямых детей клиентской области (MSAA показывает дерево плоско:
+// все видимые узлы - прямые дети клиентской области). Узлы дерева можно узнавать и по началу названия.
 static BOOL find_visible_node(const ACC_ITEM *client, const NAMES_NODE *node, ACC_ITEM *out)
 {
-    return acc_find_child(client, node, out);
+    return acc_find_child(client, node, TRUE, out);
 }
 
 // Нажимать "вправо" на выделенном узле (только раскрывает, не сворачивает), пока нужный узел не
@@ -332,47 +69,14 @@ static BOOL expand_until_visible(const MMC *mmc, const ACC_ITEM *client, const N
     }
 }
 
-// Поиск дочернего окна по классу
-
-typedef struct
-{
-    const WCHAR *class_name;
-    HWND         found;
-} FIND_WINDOW;
-
-static BOOL CALLBACK find_by_class_proc(HWND window, LPARAM param)
-{
-    FIND_WINDOW *search = (FIND_WINDOW *)param;
-    WCHAR class_name[CLASS_NAME_CCH];
-
-    if (GetClassNameW(window, class_name, CLASS_NAME_CCH) && lstrcmpiW(class_name, search->class_name) == 0)
-    {
-        search->found = window;
-        return FALSE;
-    }
-
-    return TRUE;
-}
-
-// EnumChildWindows обходит всех потомков (не только прямых детей).
-static HWND find_descendant(HWND parent, const WCHAR *class_name)
-{
-    FIND_WINDOW search;
-
-    search.class_name = class_name;
-    search.found = NULL;
-    EnumChildWindows(parent, find_by_class_proc, (LPARAM)&search);
-
-    return search.found;
-}
-
+// Дочернее окно консоли по классу: ждать до timeout_ms.
 static HWND wait_descendant(HWND parent, const WCHAR *class_name, DWORD timeout_ms)
 {
     DWORD start_tick = GetTickCount();
 
     for (;;)
     {
-        HWND window = find_descendant(parent, class_name);
+        HWND window = wnd_find_descendant(parent, class_name);
 
         if (window) return window;
         if (wnd_aborting() || GetTickCount() - start_tick >= timeout_ms) return NULL;
@@ -393,7 +97,7 @@ typedef struct
     BOOL   active;      // есть что восстанавливать
 } CONSOLE_VIEW;
 
-// gpedit в прогоне открывается и закрывается по одному, поэтому хватает одного состояния.
+// Консоли в прогоне открываются и закрываются по одной, поэтому хватает одного состояния.
 static CONSOLE_VIEW g_console_view;
 
 static BOOL read_file_bytes(const WCHAR *path, BUFFER *out)
@@ -446,7 +150,7 @@ static void write_file_bytes(const WCHAR *path, const BUFFER *content)
     CloseHandle(file);
 }
 
-// Действие после закрытия gpedit: вернуть файл вида консоли как был (или удалить, если его не было).
+// Действие после закрытия консоли: вернуть файл вида консоли как был (или удалить, если его не было).
 static void restore_console_view(void *argument)
 {
     CONSOLE_VIEW *view = (CONSOLE_VIEW *)argument;
@@ -523,9 +227,7 @@ BOOL mmc_attach(MMC *mmc, HWND frame, DWORD timeout_ms)
     ZeroMemory(mmc, sizeof(*mmc));
     mmc->frame = frame;
 
-    if (!ensure_oleacc()) return FALSE;
-
-    g_co_initialize_ex(NULL, COINIT_APARTMENTTHREADED_VALUE);
+    if (!acc_start()) return FALSE;
 
     mmc->tree = wait_descendant(frame, L"SysTreeView32", timeout_ms);
 
@@ -535,15 +237,9 @@ BOOL mmc_attach(MMC *mmc, HWND frame, DWORD timeout_ms)
         return FALSE;
     }
 
-    IAccessible *tree_accessible = NULL;
-    HRESULT result = g_accessible_object_from_window(mmc->tree, (DWORD)OBJID_CLIENT, &IID_IAccessible_local,
-                                                     (void **)&tree_accessible);
+    IAccessible *tree_accessible = acc_window_object(mmc->tree, L"дерево консоли");
 
-    if (FAILED(result) || !tree_accessible)
-    {
-        log_msg(L"MMC: не получить объект доступности дерева (код 0x%08lX)", (unsigned long)result);
-        return FALSE;
-    }
+    if (!tree_accessible) return FALSE;
 
     mmc->tree_accessible = tree_accessible;
 
@@ -573,9 +269,8 @@ void mmc_detach(MMC *mmc)
         mmc->tree_accessible = NULL;
     }
 
-    // mmc_attach вызывает CoInitializeEx сразу после загрузки oleacc, поэтому CoUninitialize
-    // парный ему - по тому же признаку, даже если дерево так и не нашлось
-    if (g_oleacc_loaded && g_co_uninitialize) g_co_uninitialize();
+    // в паре с acc_start из mmc_attach - даже если дерево так и не нашлось
+    acc_stop();
 }
 
 // Навигация
@@ -587,8 +282,8 @@ BOOL mmc_select_path(MMC *mmc, const NAMES_PATH *path, DWORD expand_timeout_ms)
     ACC_ITEM client = acc_item_of((IAccessible *)mmc->tree_accessible, CHILDID_SELF);
     ACC_ITEM root;
 
-    // корень консоли ("Политика "Локальный компьютер"" / "Local Computer Policy") - первый видимый
-    // узел; раскрываем его, чтобы стал виден первый узел пути (MMC мог раскрыть и сам)
+    // корень консоли ("Политика "Локальный компьютер"", "Локальные пользователи и группы (локально)") -
+    // первый видимый узел; раскрываем его, чтобы стал виден первый узел пути (MMC мог раскрыть и сам)
     if (!acc_first_child(&client, &root))
     {
         log_msg(L"MMC: дерево консоли пустое");
@@ -611,13 +306,13 @@ BOOL mmc_select_path(MMC *mmc, const NAMES_PATH *path, DWORD expand_timeout_ms)
             WCHAR wanted[NODE_NAME_CCH];
 
             names_describe(path->nodes[level], wanted, NODE_NAME_CCH);
-            log_msg(L"MMC: узел не найден (%s), сценарий \"%s\" пропущен", wanted, path->title);
-            log_visible_nodes(&client);
+            log_msg(L"MMC: узел не найден (%s), путь \"%s\"", wanted, path->title);
+            acc_log_children(&client, L"видимые узлы дерева");
             ok = FALSE;
             break;
         }
 
-        // выделить узел; для последнего MMC сразу покажет его политики в правой панели
+        // выделить узел; для последнего MMC сразу покажет его содержимое в правой панели
         acc_item_select(&item, SELFLAG_TAKEFOCUS | SELFLAG_TAKESELECTION);
 
         if (path->nodes[level + 1]) visible = expand_until_visible(mmc, &client, path->nodes[level + 1],
@@ -638,42 +333,7 @@ static int list_item_count(HWND list)
     return (int)SendMessageW(list, LVM_GETITEMCOUNT, 0, 0);
 }
 
-// Ширина столбца при автоподгонке по режиму (LVSCW_AUTOSIZE или LVSCW_AUTOSIZE_USEHEADER).
-static int autosize_width(HWND list, int column, int mode)
-{
-    SendMessageW(list, LVM_SETCOLUMNWIDTH, (WPARAM)column, (LPARAM)mode);
-
-    return (int)SendMessageW(list, LVM_GETCOLUMNWIDTH, (WPARAM)column, 0);
-}
-
-// Подогнать столбцы под содержимое. Названия и значения видны целиком; если оба не влезают в ширину
-// списка - значение (второй столбец) показываем полностью, столбец названия сужаем (но не до нуля),
-// чтобы не было горизонтальной прокрутки, которая прячет именно значение (оно справа).
-static void fit_result_columns(HWND list)
-{
-    int width_name = max(autosize_width(list, 0, LVSCW_AUTOSIZE),
-                         autosize_width(list, 0, LVSCW_AUTOSIZE_USEHEADER));
-    int width_value = max(autosize_width(list, LIST_VALUE_COLUMN, LVSCW_AUTOSIZE),
-                          autosize_width(list, LIST_VALUE_COLUMN, LVSCW_AUTOSIZE_USEHEADER));
-    RECT client;
-
-    if (!GetClientRect(list, &client)) return;
-
-    int available = client.right - client.left - LIST_SCROLLBAR_GUARD;
-
-    if (width_name + width_value > available)
-    {
-        width_name = available - width_value;
-
-        if (width_name < LIST_COLUMN_MIN_PX) width_name = LIST_COLUMN_MIN_PX;
-    }
-
-    SendMessageW(list, LVM_SETCOLUMNWIDTH, 0, (LPARAM)width_name);
-    SendMessageW(list, LVM_SETCOLUMNWIDTH, LIST_VALUE_COLUMN, (LPARAM)width_value);
-    log_msg(L"MMC: ширина столбцов списка: %d и %d (место %d)", width_name, width_value, available);
-}
-
-BOOL mmc_show_result_list(MMC *mmc, DWORD timeout_ms)
+BOOL mmc_wait_result_list(MMC *mmc, DWORD timeout_ms)
 {
     mmc->list = wait_descendant(mmc->frame, L"SysListView32", timeout_ms);
 
@@ -705,9 +365,439 @@ BOOL mmc_show_result_list(MMC *mmc, DWORD timeout_ms)
     }
 
     log_msg(L"MMC: строк в списке: %d", previous_count < 0 ? 0 : previous_count);
-    fit_result_columns(mmc->list);
 
     return previous_count > 0;
+}
+
+// Ширина столбца при автоподгонке по режиму (LVSCW_AUTOSIZE или LVSCW_AUTOSIZE_USEHEADER).
+static int autosize_width(HWND list, int column, int mode)
+{
+    SendMessageW(list, LVM_SETCOLUMNWIDTH, (WPARAM)column, (LPARAM)mode);
+
+    return (int)SendMessageW(list, LVM_GETCOLUMNWIDTH, (WPARAM)column, 0);
+}
+
+// Ширина столбца, при которой видны и текст строк, и заголовок.
+static int text_width(HWND list, int column)
+{
+    // по отдельности: макрос max вычисляет аргументы дважды
+    int width_text = autosize_width(list, column, LVSCW_AUTOSIZE);
+    int width_header = autosize_width(list, column, LVSCW_AUTOSIZE_USEHEADER);
+
+    return max(width_text, width_header);
+}
+
+// Ширина клиентской области списка без запаса на вертикальную полосу прокрутки. 0 - не узнать.
+static int list_available_width(HWND list)
+{
+    RECT client;
+
+    if (!GetClientRect(list, &client)) return 0;
+
+    return client.right - client.left - LIST_SCROLLBAR_GUARD;
+}
+
+void mmc_fit_value_column(MMC *mmc)
+{
+    if (!mmc->list) return;
+
+    int width_name = text_width(mmc->list, 0);
+    int width_value = text_width(mmc->list, LIST_VALUE_COLUMN);
+    int available = list_available_width(mmc->list);
+
+    if (available <= 0) return;
+
+    if (width_name + width_value > available)
+    {
+        width_name = available - width_value;
+
+        if (width_name < LIST_COLUMN_MIN_PX) width_name = LIST_COLUMN_MIN_PX;
+    }
+
+    SendMessageW(mmc->list, LVM_SETCOLUMNWIDTH, 0, (LPARAM)width_name);
+    SendMessageW(mmc->list, LVM_SETCOLUMNWIDTH, LIST_VALUE_COLUMN, (LPARAM)width_value);
+    log_msg(L"MMC: ширина столбцов списка: %d и %d (место %d)", width_name, width_value, available);
+}
+
+// Число столбцов списка (по заголовку). 0 - не узнать.
+static int list_column_count(HWND list)
+{
+    HWND header = (HWND)SendMessageW(list, LVM_GETHEADER, 0, 0);
+
+    if (!header) return 0;
+
+    int count = (int)SendMessageW(header, HDM_GETITEMCOUNT, 0, 0);
+
+    return count < 0 ? 0 : count;
+}
+
+// Сузить текстовые столбцы (кроме первого), начиная с последнего, но не уже LIST_COLUMN_MIN_PX, пока
+// вместе с минимумом для следующего столбца (rest_min) они не влезут в available. Возвращает их сумму.
+static int shrink_text_columns(int *widths, int text_columns, int rest_min, int available)
+{
+    int used = 0;
+
+    for (int column = 0; column < text_columns; column++) used += widths[column];
+
+    for (int column = text_columns - 1; column > 0 && used + rest_min > available; column--)
+    {
+        int narrowed = max(widths[column] - (used + rest_min - available), LIST_COLUMN_MIN_PX);
+
+        if (narrowed >= widths[column]) continue;
+
+        used -= widths[column] - narrowed;
+        widths[column] = narrowed;
+    }
+
+    return used;
+}
+
+void mmc_fit_text_columns(MMC *mmc, int text_columns)
+{
+    int widths[MAX_TEXT_COLUMNS];
+
+    if (!mmc->list) return;
+
+    int column_count = list_column_count(mmc->list);
+    int available = list_available_width(mmc->list);
+
+    if (column_count <= 0 || available <= 0) return;
+    if (text_columns > column_count) text_columns = column_count;
+    if (text_columns > MAX_TEXT_COLUMNS) text_columns = MAX_TEXT_COLUMNS;
+
+    BOOL has_rest = text_columns < column_count;
+
+    for (int column = 0; column < text_columns; column++) widths[column] = text_width(mmc->list, column);
+
+    // длинный текст (XP: полное имя HelpAssistant, SUPPORT_388945a0) не должен выталкивать следующий
+    // столбец за край - первый столбец (имя) всегда целиком, остальные сужаются
+    int used = shrink_text_columns(widths, text_columns, has_rest ? LIST_COLUMN_MIN_PX : 0, available);
+    int rest = max(available - used, LIST_COLUMN_MIN_PX);
+
+    for (int column = 0; column < text_columns; column++)
+    {
+        SendMessageW(mmc->list, LVM_SETCOLUMNWIDTH, (WPARAM)column, (LPARAM)widths[column]);
+    }
+
+    if (has_rest) SendMessageW(mmc->list, LVM_SETCOLUMNWIDTH, (WPARAM)text_columns, (LPARAM)rest);
+
+    log_msg(L"MMC: столбцов в списке %d, первые %d по тексту - вместе %d, следующему - %d (место %d)", column_count,
+            text_columns, used, has_rest ? rest : 0, available);
+}
+
+// Окно свойств строки списка
+
+// Окно - окно свойств (с вкладками), а не сообщение об ошибке.
+static BOOL is_property_sheet(HWND dialog)
+{
+    DWORD_PTR result = 0;
+
+    if (!SendMessageTimeoutW(dialog, PSM_GETTABCONTROL, 0, 0, SMTO_ABORTIFHUNG, SHEET_MESSAGE_TIMEOUT_MS, &result))
+    {
+        return FALSE;
+    }
+
+    return result && IsWindow((HWND)result);
+}
+
+// Окно с фокусом ввода в потоке окна window. NULL - не узнать.
+static HWND thread_focus(HWND window)
+{
+    GUITHREADINFO info;
+
+    ZeroMemory(&info, sizeof(info));
+    info.cbSize = sizeof(info);
+
+    if (!GetGUIThreadInfo(GetWindowThreadProcessId(window, NULL), &info)) return NULL;
+
+    return info.hwndFocus;
+}
+
+// Состояние строки списка - в журнал (номера строк - сообщениями без указателей, память mmc не нужна).
+// Возвращает состояние MSAA.
+static long log_item_state(const MMC *mmc, const ACC_ITEM *item, const WCHAR *item_name, const WCHAR *how)
+{
+    long state = acc_item_state(item);
+    int selected_count = (int)SendMessageW(mmc->list, LVM_GETSELECTEDCOUNT, 0, 0);
+    int selected = (int)SendMessageW(mmc->list, LVM_GETNEXTITEM, (WPARAM)LIST_SEARCH_FROM_START, LVNI_SELECTED);
+    int focused = (int)SendMessageW(mmc->list, LVM_GETNEXTITEM, (WPARAM)LIST_SEARCH_FROM_START, LVNI_FOCUSED);
+
+    log_msg(L"MMC: строка \"%s\" (элемент MSAA %ld) %s: состояние 0x%lX, выделено строк %d (строка %d), фокус - "
+            L"строка %d, фокус ввода %s", item_name, item->child, how, (unsigned long)state, selected_count,
+            selected, focused, thread_focus(mmc->list) == mmc->list ? L"в списке" : L"не в списке");
+
+    return state;
+}
+
+// Найти строку списка с названием item_name (целиком, без учёта регистра, "ё" = "е") и выделить её -
+// в item (с передачей владения). FALSE - строки нет (в журнал - все строки) или она не выделилась.
+static BOOL select_list_item(const MMC *mmc, IAccessible *list_accessible, const WCHAR *item_name, ACC_ITEM *item)
+{
+    ACC_ITEM client = acc_item_of(list_accessible, CHILDID_SELF);
+    NAMES_NODE wanted;
+
+    ZeroMemory(&wanted, sizeof(wanted));
+    wanted.variants[0] = item_name;
+
+    // только целиком: "Пользователи" не должны найтись как "Пользователи удаленного рабочего стола"
+    if (!acc_find_child(&client, &wanted, FALSE, item))
+    {
+        log_msg(L"MMC: в списке нет строки \"%s\"", item_name);
+        acc_log_children(&client, L"строки списка");
+        return FALSE;
+    }
+
+    // строку с фокусом oleacc выделяет, только когда фокус ввода уже в самом списке (у дерева он есть
+    // с запуска консоли; Win7: без этого строка не выделялась) - сначала фокус списку
+    acc_item_select(&client, SELFLAG_TAKEFOCUS);
+    acc_item_select(item, SELFLAG_TAKEFOCUS | SELFLAG_TAKESELECTION);
+
+    if (log_item_state(mmc, item, item_name, L"с фокусом") & STATE_SYSTEM_SELECTED) return TRUE;
+
+    // запасной путь: выделить без фокуса
+    acc_item_select(item, SELFLAG_TAKESELECTION);
+
+    if (log_item_state(mmc, item, item_name, L"без фокуса") & STATE_SYSTEM_SELECTED) return TRUE;
+
+    log_msg(L"MMC: строка \"%s\" не выделилась", item_name);
+    acc_item_release(item);
+
+    return FALSE;
+}
+
+// Новое окно свойств процесса консоли: ждать до timeout_ms. Открылось сообщение (ошибка, нет прав) -
+// закрыть его и вернуть NULL.
+static HWND wait_properties(const WND_SET *before, DWORD process_id, DWORD timeout_ms)
+{
+    WCHAR description[TEXT_BUFFER_CCH];
+    HWND dialog = wnd_wait_new(before, process_id, PROPERTIES_CLASSES, timeout_ms);
+
+    if (!dialog || is_property_sheet(dialog)) return dialog;
+
+    wnd_describe(dialog, description, TEXT_BUFFER_CCH);
+    log_msg(L"MMC: вместо окна свойств открылось сообщение, закрываю: %s", description);
+    PostMessageW(dialog, WM_CLOSE, 0, 0);
+
+    return NULL;
+}
+
+// Открыть свойства выделенной строки: Enter в списке (MMC выполняет действие по умолчанию - у групп
+// и пользователей это "Свойства"). Не открылось - запасной путь: действие по умолчанию строки через MSAA
+// (двойной щелчок по ней; консоль в это время поверх всех - строку не закрывают другие окна).
+// before - память под список окон до нажатия.
+static HWND press_properties(const MMC *mmc, const ACC_ITEM *item, const WCHAR *item_name, WND_SET *before,
+                             DWORD timeout_ms)
+{
+    DWORD process_id = 0;
+
+    GetWindowThreadProcessId(mmc->frame, &process_id);
+    wnd_snapshot(before);
+    PostMessageW(mmc->list, WM_KEYDOWN, VK_RETURN, 0);
+    PostMessageW(mmc->list, WM_KEYUP, VK_RETURN, 0);
+
+    HWND dialog = wait_properties(before, process_id, timeout_ms);
+
+    if (dialog || wnd_aborting()) return dialog;
+
+    log_msg(L"MMC: Enter не открыл свойства \"%s\" за %lu мс - двойной щелчок по строке (MSAA)", item_name,
+            timeout_ms);
+
+    if (!acc_item_default_action(item)) log_msg(L"MMC: действие по умолчанию строки не выполнено");
+
+    return wait_properties(before, process_id, timeout_ms);
+}
+
+// Записать окно свойств в журнал и проверить заголовок: в нём должно быть название строки
+// ("Свойства: Администраторы", "Administrators Properties").
+static void log_properties(HWND dialog, const WCHAR *item_name, const WCHAR *log_name)
+{
+    WCHAR description[TEXT_BUFFER_CCH];
+    WCHAR title[TEXT_BUFFER_CCH];
+
+    wnd_describe(dialog, description, TEXT_BUFFER_CCH);
+    log_msg(L"%s: окно %s", log_name, description);
+    wnd_title(dialog, title, TEXT_BUFFER_CCH);
+
+    if (!wcsstr(title, item_name))
+    {
+        log_msg(L"Внимание: в заголовке окна свойств нет \"%s\" - возможно, открылись свойства другой строки",
+                item_name);
+    }
+}
+
+HWND mmc_open_item_properties(MMC *mmc, const WCHAR *item_name, const WCHAR *log_name, DWORD timeout_ms)
+{
+    BUFFER before = { 0 };
+    ACC_ITEM item;
+    HWND dialog = NULL;
+
+    if (!mmc->list || wnd_aborting()) return NULL;
+
+    IAccessible *list_accessible = acc_window_object(mmc->list, L"список результатов");
+
+    if (!list_accessible) return NULL;
+
+    // консоль - активная и поверх всех: фокус ввода можно передать списку, а двойной щелчок (запасной
+    // путь) попадёт в строку, даже если уже открыто другое окно свойств
+    wnd_raise(&mmc->frame, 1);
+
+    // WND_SET большой (WND_SET_MAX окон) - не на стеке
+    if (select_list_item(mmc, list_accessible, item_name, &item))
+    {
+        if (buffer_init(&before, sizeof(WND_SET)) == BUFFER_OK)
+        {
+            dialog = press_properties(mmc, &item, item_name, before.data, timeout_ms);
+        }
+
+        acc_item_release(&item);
+    }
+
+    wnd_unraise(&mmc->frame, 1);
+    IAccessible_Release(list_accessible);
+    buffer_destroy(&before);
+
+    if (!dialog)
+    {
+        log_msg(L"MMC: окно свойств \"%s\" не открылось", item_name);
+        return NULL;
+    }
+
+    // окно принадлежит mmc.exe (процесс запомнен с окном консоли) - закрывается только WM_CLOSE
+    wnd_track(dialog, NULL, log_name);
+    log_properties(dialog, item_name, log_name);
+
+    return dialog;
+}
+
+// Область действий (MMC 3.0)
+
+// Части окна консоли: панели инструментов (меню MMC - тоже панель инструментов) и область действий
+typedef struct
+{
+    HWND action_pane;                   // NULL - нет (MMC 2.0 на XP)
+    HWND toolbars[MAX_TOOLBARS];
+    int  toolbar_count;
+} FRAME_PARTS;
+
+static BOOL CALLBACK frame_parts_proc(HWND window, LPARAM param)
+{
+    FRAME_PARTS *parts = (FRAME_PARTS *)param;
+    WCHAR class_name[CLASS_NAME_CCH];
+    WCHAR title[CLASS_NAME_CCH];
+
+    if (!GetClassNameW(window, class_name, CLASS_NAME_CCH)) return TRUE;
+
+    if (lstrcmpiW(class_name, TOOLBARCLASSNAMEW) == 0)
+    {
+        if (parts->toolbar_count < MAX_TOOLBARS) parts->toolbars[parts->toolbar_count++] = window;
+    }
+    else if (lstrcmpiW(class_name, ACTION_PANE_CLASS) == 0)
+    {
+        wnd_title(window, title, CLASS_NAME_CCH);
+
+        if (lstrcmpW(title, ACTION_PANE_TITLE) == 0) parts->action_pane = window;
+    }
+
+    return TRUE;
+}
+
+static void find_frame_parts(HWND frame, FRAME_PARTS *parts)
+{
+    ZeroMemory(parts, sizeof(*parts));
+    EnumChildWindows(frame, frame_parts_proc, (LPARAM)parts);
+}
+
+// Нажать кнопку панели инструментов, название которой подходит под button_name (MSAA, действие
+// по умолчанию). FALSE - такой кнопки нет.
+static BOOL press_toolbar_button(const FRAME_PARTS *parts, const NAMES_NODE *button_name)
+{
+    for (int i = 0; i < parts->toolbar_count; i++)
+    {
+        IAccessible *toolbar = acc_window_object(parts->toolbars[i], L"панель инструментов");
+
+        if (!toolbar) continue;
+
+        ACC_ITEM client = acc_item_of(toolbar, CHILDID_SELF);
+        ACC_ITEM button;
+        BOOL found = acc_find_child(&client, button_name, TRUE, &button);
+
+        if (found)
+        {
+            if (!acc_item_default_action(&button)) log_msg(L"MMC: кнопка панели инструментов не нажалась");
+
+            acc_item_release(&button);
+        }
+
+        IAccessible_Release(toolbar);
+
+        if (found) return TRUE;
+    }
+
+    return FALSE;
+}
+
+// Названия кнопок всех панелей инструментов - в журнал (по ним дополняется словарь names.c).
+static void log_toolbar_buttons(const FRAME_PARTS *parts)
+{
+    for (int i = 0; i < parts->toolbar_count; i++)
+    {
+        IAccessible *toolbar = acc_window_object(parts->toolbars[i], L"панель инструментов");
+
+        if (!toolbar) continue;
+
+        ACC_ITEM client = acc_item_of(toolbar, CHILDID_SELF);
+
+        acc_log_children(&client, L"кнопки панели инструментов");
+        IAccessible_Release(toolbar);
+    }
+}
+
+static BOOL wait_hidden(HWND window, DWORD timeout_ms)
+{
+    DWORD start_tick = GetTickCount();
+
+    while (IsWindowVisible(window))
+    {
+        if (wnd_aborting() || GetTickCount() - start_tick >= timeout_ms) return FALSE;
+
+        Sleep(ACTION_PANE_POLL_MS);
+    }
+
+    return TRUE;
+}
+
+void mmc_hide_action_pane(MMC *mmc)
+{
+    FRAME_PARTS parts;
+    WCHAR wanted[NODE_NAME_CCH];
+
+    find_frame_parts(mmc->frame, &parts);
+
+    if (!parts.action_pane || !IsWindowVisible(parts.action_pane)) return;    // MMC 2.0 или уже скрыта
+
+    // консоль поверх всех: MSAA может нажать кнопку и щелчком мыши
+    wnd_raise(&mmc->frame, 1);
+
+    BOOL pressed = press_toolbar_button(&parts, &g_names_action_pane_button);
+    BOOL hidden = pressed && wait_hidden(parts.action_pane, ACTION_PANE_WAIT_MS);
+
+    wnd_unraise(&mmc->frame, 1);
+
+    if (hidden)
+    {
+        log_msg(L"MMC: область действий скрыта");
+        return;
+    }
+
+    if (pressed)
+    {
+        log_msg(L"MMC: кнопка нажата, но область действий не скрылась за %lu мс", (unsigned long)ACTION_PANE_WAIT_MS);
+        return;
+    }
+
+    names_describe(&g_names_action_pane_button, wanted, NODE_NAME_CCH);
+    log_msg(L"MMC: нет кнопки %s - область действий остаётся", wanted);
+    log_toolbar_buttons(&parts);
 }
 
 // Диагностика (/dump)
@@ -725,12 +815,26 @@ static BOOL CALLBACK dump_window_proc(HWND window, LPARAM param)
 
 void mmc_dump(MMC *mmc)
 {
+    FRAME_PARTS parts;
+
     log_msg(L"MMC: дочерние окна консоли:");
     EnumChildWindows(mmc->frame, dump_window_proc, 0);
 
     if (!mmc->tree_accessible) return;
 
+    find_frame_parts(mmc->frame, &parts);
+    log_toolbar_buttons(&parts);
+
     ACC_ITEM client = acc_item_of((IAccessible *)mmc->tree_accessible, CHILDID_SELF);
 
-    log_visible_nodes(&client);
+    acc_log_children(&client, L"видимые узлы дерева");
+
+    IAccessible *list_accessible = mmc->list ? acc_window_object(mmc->list, L"список результатов") : NULL;
+
+    if (!list_accessible) return;
+
+    ACC_ITEM list_client = acc_item_of(list_accessible, CHILDID_SELF);
+
+    acc_log_children(&list_client, L"строки списка");
+    IAccessible_Release(list_accessible);
 }

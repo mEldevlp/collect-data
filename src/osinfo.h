@@ -36,4 +36,11 @@ void os_set_dpi_aware(void);
 // FALSE - причина в reason.
 BOOL os_can_capture(WCHAR *reason, int reason_cch);
 
+#define OS_IPV4_TEXT_CCH 16     // "255.255.255.255" и завершающий ноль
+
+// Основной IPv4-адрес текстом (как в collect_audit.cmd): адрес интерфейса первого маршрута по умолчанию
+// (первая такая строка "route print"), а если такого маршрута нет - первый адрес компьютера; 0.0.0.0
+// и 127.x.x.x не считаются. FALSE - адреса нет.
+BOOL os_primary_ipv4(WCHAR *text, int text_cch);
+
 #endif

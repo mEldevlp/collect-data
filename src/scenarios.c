@@ -74,6 +74,7 @@ BOOL scen_shoot(const SCEN_CONTEXT *context, const WCHAR *file_name, HWND *windo
     format_text(path, PATH_BUFFER_CCH, L"%s\\%s", context->results_dir, file_name);
 
     if (count > 0) wnd_raise(windows, count);
+    if (count > 0 && context->dump) wnd_log_z_order(windows, count);
 
     wnd_clock_tip_show(CLOCK_TIP_TIMEOUT_MS);
     Sleep(REDRAW_WAIT_MS);
@@ -524,7 +525,8 @@ static BOOL run_gpedit_policy(const SCEN_CONTEXT *context, const SCENARIO *scena
     {
         if (mmc_select_path(&mmc, path, MMC_EXPAND_TIMEOUT_MS))
         {
-            mmc_show_result_list(&mmc, MMC_LIST_TIMEOUT_MS);
+            mmc_wait_result_list(&mmc, MMC_LIST_TIMEOUT_MS);
+            mmc_fit_value_column(&mmc);
 
             if (context->dump) mmc_dump(&mmc);
 
@@ -560,6 +562,265 @@ static BOOL run_lockout_policy(const SCEN_CONTEXT *context, const SCENARIO *scen
     return run_gpedit_policy(context, scenario, &g_names_lockout_policy);
 }
 
+// lusrmgr.msc (MMC): пользователи и свойства групп - одним снимком
+
+#define LUSRMGR_OPEN_TIMEOUT_MS          30000  // mmc.exe на XP запускается медленно
+#define PROPERTIES_OPEN_TIMEOUT_MS       10000  // окно свойств группы после Enter (и столько же - запасной путь)
+#define PROPERTIES_STABLE_MS             1000   // окно свойств не меняется столько - члены группы показаны
+#define PROPERTIES_READY_TIMEOUT_MS      10000  // имена членов из недоступного домена определяются долго
+#define USERS_TEXT_COLUMNS               2      // список пользователей: "Имя" и "Полное имя" - целиком
+#define USERS_CONSOLE_MIN_HEIGHT_PERCENT 45     // консоль внизу - не ниже 45% высоты рабочей области
+
+// Окна сценария "Пользователи" в порядке подъёма наверх (последнее - самое верхнее), как в образце:
+// консоль поверх нижней части окон свойств
+enum
+{
+    USERS_SYSINFO_WINDOW,
+    USERS_ADMINS_WINDOW,
+    USERS_USERS_WINDOW,
+    USERS_CONSOLE_WINDOW,
+    USERS_WINDOW_COUNT
+};
+
+// Встроенная группа, свойства которой открываются. Имя на каждом языке своё - узнаём по SID.
+typedef struct
+{
+    WELL_KNOWN_SID_TYPE sid_type;
+    const WCHAR        *sid_text;   // для журнала
+    int                 window;     // место окна свойств в массиве окон снимка
+} USERS_GROUP;
+
+static const USERS_GROUP USERS_GROUPS[] =
+{
+    { WinBuiltinAdministratorsSid, L"S-1-5-32-544", USERS_ADMINS_WINDOW },
+    { WinBuiltinUsersSid,          L"S-1-5-32-545", USERS_USERS_WINDOW },
+};
+
+// Имя встроенной группы на языке системы ("Администраторы" / "Administrators"). FALSE - не узнать.
+static BOOL group_name(const USERS_GROUP *group, WCHAR *name, DWORD name_cch)
+{
+    BYTE sid[SECURITY_MAX_SID_SIZE];
+    DWORD sid_size = sizeof(sid);
+    WCHAR domain[TEXT_BUFFER_CCH];
+    DWORD domain_cch = TEXT_BUFFER_CCH;
+    SID_NAME_USE sid_use;
+    WCHAR error_text[TEXT_BUFFER_CCH];
+
+    name[0] = 0;
+
+    if (!CreateWellKnownSid(group->sid_type, NULL, sid, &sid_size) ||
+        !LookupAccountSidW(NULL, sid, name, &name_cch, domain, &domain_cch, &sid_use))
+    {
+        log_msg(L"Группа %s: имя не узнать: %s", group->sid_text,
+                log_errtext(GetLastError(), error_text, TEXT_BUFFER_CCH));
+        return FALSE;
+    }
+
+    log_msg(L"Группа %s: \"%s\\%s\"", group->sid_text, domain, name);
+
+    return TRUE;
+}
+
+// /dump: окно свойств не успокоилось - кадр экрана "_свойства_<SID>.png" для разбора.
+static void dump_properties_frame(const SCEN_CONTEXT *context, const USERS_GROUP *group)
+{
+    WCHAR path[PATH_BUFFER_CCH];
+    WCHAR error_text[MESSAGE_BUFFER_CCH];
+
+    format_text(path, PATH_BUFFER_CCH, L"%s\\_свойства_%s.png", context->results_dir, group->sid_text);
+
+    if (!cap_screen_png(path, context->all_monitors, error_text, MESSAGE_BUFFER_CCH))
+    {
+        log_msg(L"Кадр окна свойств не сохранён: %s", error_text);
+    }
+}
+
+// Открыть свойства группы из списка групп (узел "Группы" уже выбран) и дождаться, пока окно
+// заполнится. NULL - не открылось.
+static HWND open_group_properties(const SCEN_CONTEXT *context, MMC *mmc, const USERS_GROUP *group)
+{
+    WCHAR name[TEXT_BUFFER_CCH];
+    WCHAR log_name[TEXT_BUFFER_CCH];
+
+    if (!group_name(group, name, TEXT_BUFFER_CCH)) return NULL;
+
+    format_text(log_name, TEXT_BUFFER_CCH, L"Свойства группы %s", name);
+
+    HWND dialog = mmc_open_item_properties(mmc, name, log_name, PROPERTIES_OPEN_TIMEOUT_MS);
+
+    if (!dialog) return NULL;
+
+    // готовность - по картинке списка членов группы (не всего окна: на Win7 у активного окна плавно
+    // мигает кнопка OK, и картинка окна не успокаивается); на время ожидания окно поверх всех
+    HWND members = wnd_find_descendant(dialog, L"SysListView32");
+
+    wnd_raise(&dialog, 1);
+
+    if (!wnd_wait_ready(members ? members : dialog, PROPERTIES_STABLE_MS, PROPERTIES_READY_TIMEOUT_MS))
+    {
+        log_msg(L"Внимание: окно свойств группы %s, возможно, заполнено не полностью", name);
+
+        if (context->dump) dump_properties_frame(context, group);
+    }
+
+    wnd_unraise(&dialog, 1);
+
+    return dialog;
+}
+
+// Сдвинуть окно свойств (размер у него постоянный) и записать в журнал.
+static void place_properties(HWND dialog, int x, int y)
+{
+    RECT rect;
+
+    SetWindowPos(dialog, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    GetWindowRect(dialog, &rect);
+    log_msg(L"Раскладка: окно свойств группы %d,%d %dx%d", rect.left, rect.top, rect.right - rect.left,
+            rect.bottom - rect.top);
+}
+
+// Низ списка членов группы в окне свойств (экранная координата) - в bottom, если он ниже.
+// FALSE - списка нет.
+static BOOL lower_members_bottom(HWND dialog, int *bottom)
+{
+    RECT rect;
+    HWND members = dialog ? wnd_find_descendant(dialog, L"SysListView32") : NULL;
+
+    if (!members || !GetWindowRect(members, &rect)) return FALSE;
+    if (rect.bottom > *bottom) *bottom = rect.bottom;
+
+    return TRUE;
+}
+
+// Раскладка как в образце (VIEWER1\users.PNG): сведения о системе справа (как во всех сценариях);
+// окна свойств групп сверху - "Администраторы" у левого края, "Пользователи" рядом, а если места не
+// хватает - правым краем к сведениям о системе, поверх правой части "Администраторов"; консоль снизу
+// слева, поверх низа окон свойств: верх - по низ списков членов групп, но высота консоли не меньше
+// USERS_CONSOLE_MIN_HEIGHT_PERCENT рабочей области (на маленьком экране низ списков закрывается).
+static void place_users_windows(HWND *windows)
+{
+    RECT region, rect;
+    HWND admins = windows[USERS_ADMINS_WINDOW];
+    HWND users = windows[USERS_USERS_WINDOW];
+
+    // region - место слева от сведений о системе
+    wnd_layout(NULL, windows[USERS_SYSINFO_WINDOW], &region);
+
+    int next_x = region.left;
+
+    if (admins && GetWindowRect(admins, &rect))
+    {
+        place_properties(admins, region.left, region.top);
+        next_x = region.left + rect.right - rect.left;
+    }
+
+    if (users && GetWindowRect(users, &rect))
+    {
+        int width = rect.right - rect.left;
+
+        if (next_x + width > region.right) next_x = region.right - width;
+        if (next_x < region.left) next_x = region.left;
+
+        place_properties(users, next_x, region.top);
+    }
+
+    HWND console = windows[USERS_CONSOLE_WINDOW];
+    int region_height = region.bottom - region.top;
+    int lowest_top = region.bottom - region_height * USERS_CONSOLE_MIN_HEIGHT_PERCENT / PERCENT_BASE;
+    int top = region.top;
+    BOOL admins_members = lower_members_bottom(admins, &top);
+    BOOL users_members = lower_members_bottom(users, &top);
+
+    if (!admins_members && !users_members) top = region.top + region_height / 2;   // списков нет - с середины
+    if (top > lowest_top) top = lowest_top;
+
+    SetWindowPos(console, NULL, region.left, top, region.right - region.left, region.bottom - top,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    GetWindowRect(console, &rect);
+    log_msg(L"Раскладка: консоль %d,%d %dx%d", rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+}
+
+// Открыть свойства обеих групп (узел "Группы"), вернуться к узлу "Пользователи", разложить окна и снять.
+// Без списка пользователей снимка нет; без окна свойств группы снимок делается, но сценарий не удался.
+static BOOL shoot_users(const SCEN_CONTEXT *context, const SCENARIO *scenario, MMC *mmc, HWND *windows)
+{
+    // MMC 3.0: область действий отнимает у списка пользователей почти всё место (Win7: 110 px из 300)
+    mmc_hide_action_pane(mmc);
+
+    BOOL groups_shown = mmc_select_path(mmc, &g_names_local_groups, MMC_EXPAND_TIMEOUT_MS) &&
+                        mmc_wait_result_list(mmc, MMC_LIST_TIMEOUT_MS);
+    BOOL groups_opened = groups_shown;
+
+    // группы - независимо друг от друга: не открылась одна - вторую всё равно пробуем
+    for (int i = 0; groups_shown && i < (int)ARRAY_COUNT(USERS_GROUPS); i++)
+    {
+        windows[USERS_GROUPS[i].window] = open_group_properties(context, mmc, &USERS_GROUPS[i]);
+
+        if (!windows[USERS_GROUPS[i].window]) groups_opened = FALSE;
+    }
+
+    // окна свойств немодальные: консоль работает дальше, в правой панели - список пользователей
+    if (!mmc_select_path(mmc, &g_names_local_users, MMC_EXPAND_TIMEOUT_MS) ||
+        !mmc_wait_result_list(mmc, MMC_LIST_TIMEOUT_MS))
+    {
+        if (context->dump) mmc_dump(mmc);
+
+        return FALSE;
+    }
+
+    mmc_fit_text_columns(mmc, USERS_TEXT_COLUMNS);
+
+    if (context->dump) mmc_dump(mmc);
+
+    place_users_windows(windows);
+
+    BOOL shot = scen_shoot(context, scenario->file_name, windows, USERS_WINDOW_COUNT);
+
+    if (!groups_opened) log_msg(L"Внимание: снимок сделан без окна свойств группы - сценарий не удался");
+
+    return shot && groups_opened;
+}
+
+// Пользователи и группы: lusrmgr на узле "Пользователи" + свойства групп S-1-5-32-544 и S-1-5-32-545 +
+// сведения о системе - все окна на одном снимке.
+static BOOL run_users(const SCEN_CONTEXT *context, const SCENARIO *scenario)
+{
+    HWND windows[USERS_WINDOW_COUNT];
+    MMC mmc;
+    BOOL ok = FALSE;
+
+    ZeroMemory(windows, sizeof(windows));
+    windows[USERS_SYSINFO_WINDOW] = scen_sysinfo(context);
+    windows[USERS_CONSOLE_WINDOW] = mmc_open_console(L"lusrmgr", L"Локальные пользователи и группы",
+                                                     LUSRMGR_OPEN_TIMEOUT_MS);
+
+    if (!windows[USERS_CONSOLE_WINDOW]) return FALSE;
+
+    wnd_layout(windows[USERS_CONSOLE_WINDOW], windows[USERS_SYSINFO_WINDOW], NULL);
+
+    if (mmc_attach(&mmc, windows[USERS_CONSOLE_WINDOW], MMC_ATTACH_TIMEOUT_MS))
+    {
+        ok = shoot_users(context, scenario, &mmc, windows);
+    }
+    else if (context->dump)
+    {
+        mmc_dump(&mmc);
+    }
+
+    mmc_detach(&mmc);
+
+    // окна свойств - раньше консоли: пока они открыты, MMC на закрытие отвечает сообщением (Win7)
+    if (!context->keep)
+    {
+        if (windows[USERS_USERS_WINDOW]) wnd_close(windows[USERS_USERS_WINDOW]);
+        if (windows[USERS_ADMINS_WINDOW]) wnd_close(windows[USERS_ADMINS_WINDOW]);
+
+        wnd_close(windows[USERS_CONSOLE_WINDOW]);
+    }
+
+    return ok;
+}
+
 // Имена файлов - как в ручных скриншотах NEVSKA03. Список ПО - постранично:
 // "Установленное ПО_1.png", "_2" и т. д. (%d - номер страницы).
 // Поля: имя для /only, имя файла, описание, служебный (только по /only), функция сценария.
@@ -575,12 +836,8 @@ const SCENARIO g_scenarios[] =
       L"gpedit: Политика блокировки учётной записи", FALSE, run_lockout_policy },
     { L"sync_time", L"sync_time.png",
       L"Синхронизация времени: cmd (w32tm / net time), XP - \"Дата и время\"", FALSE, run_time_sync },
-    { L"users_list", L"user_list.png",
-      L"lusrmgr: Пользователи", FALSE, NULL },
-    { L"users_group_admin", L"user_list_admin.png",
-      L"lusrmgr: свойства группы S-1-5-32-544", FALSE, NULL },
-    { L"users_group_user", L"user_list_users.png",
-      L"lusrmgr: свойства группы S-1-5-32-545", FALSE, NULL },
+    { L"users", L"Пользователи.png",
+      L"lusrmgr: пользователи + свойства групп S-1-5-32-544 и S-1-5-32-545", FALSE, run_users },
     { L"test", L"test.png",
       L"Проверка: подсказка у часов + снимок экрана", TRUE, run_test },
 };

@@ -35,6 +35,29 @@ const NAMES_PATH g_names_lockout_policy =
     { &COMPUTER_CONFIGURATION, &WINDOWS_SETTINGS, &SECURITY_SETTINGS, &ACCOUNT_POLICIES, &LOCKOUT_POLICY, NULL }
 };
 
+// Узлы lusrmgr.msc (корень "Локальные пользователи и группы (локально)" / "Local Users and Groups (Local)"
+// в путь не входит). Узлы ищутся и по началу названия, но корень с "Пользователи"/"Users" не начинается.
+static const NAMES_NODE LOCAL_USERS = { { L"Пользователи", L"Users" } };
+static const NAMES_NODE LOCAL_GROUPS = { { L"Группы", L"Groups" } };
+
+const NAMES_PATH g_names_local_users =
+{
+    L"Пользователи",
+    { &LOCAL_USERS, NULL }
+};
+
+const NAMES_PATH g_names_local_groups =
+{
+    L"Группы",
+    { &LOCAL_GROUPS, NULL }
+};
+
+// Кнопка панели инструментов MMC 3.0 (Vista+), которая прячет область действий справа
+const NAMES_NODE g_names_action_pane_button =
+{
+    { L"Show/Hide Action Pane", L"Отображение и скрытие панели действий" }
+};
+
 // Привести название к виду для сравнения: "ё" -> "е", нижний регистр.
 static void normalize(const WCHAR *text, WCHAR *normalized, int normalized_cch)
 {
