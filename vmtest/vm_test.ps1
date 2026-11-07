@@ -7,12 +7,16 @@
 #     имя vboxsrv, а не vboxsvr: GA на Win7 не знают vboxsvr;
 #  5) ожидание results\<ИМЯ_ПК>\done.txt, снимок экрана гостя, перенос результатов в vmtest\results\;
 #  6) выключение ВМ (если не -Keep).
+# -Script - эталонный прогон: в госте вместо утилиты запускается collect_audit.cmd (с collect_network.cmd)
+#  из родительской папки репозитория; ключи скрипта - в -ScrArgs (например '/ping'), по умолчанию без ключей.
 # Пример: .\vm_test.ps1 -Vm audit_xpsp2 -ScrArgs '/only:test'
 param(
     [Parameter(Mandatory = $true)][string]$Vm,
     [string]$ScrArgs = '/only:test',
     [string]$Prep = '',              # .cmd, который run.cmd выполнит в госте перед утилитой (тестовые данные)
     [switch]$DefaultDir,             # запуск без папки результатов: утилита сама создаёт <ИМЯ_ПК>_<IP> рядом с exe
+    [switch]$Script,                 # эталон: collect_audit.cmd вместо утилиты (лимит прогона по умолчанию 2400 с)
+    [string]$ScriptDir = '',         # где взять collect_audit.cmd и collect_network.cmd; по умолчанию ..\..
     [switch]$Trial,                 # пробная сборка из obj\v145 (не для XP)
     [string]$ExeDir = '',            # где взять screens_x86/x64.exe; по умолчанию ..\..\bin
     [switch]$NoRestore,              # не откатывать к clean (ВМ уже запущена/подготовлена)
@@ -28,6 +32,10 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $share = Join-Path $here 'share'
 if (-not $ExeDir) { $ExeDir = Join-Path $here '..\..\bin' }
 if (Test-Path $ExeDir) { $ExeDir = (Resolve-Path $ExeDir).Path }
+if (-not $ScriptDir) { $ScriptDir = Join-Path $here '..\..' }
+# скрипту ключи утилиты не нужны, а на XP SP2 он идёт больше 10 мин
+if ($Script -and -not $PSBoundParameters.ContainsKey('ScrArgs')) { $ScrArgs = '' }
+if ($Script -and -not $PSBoundParameters.ContainsKey('RunTimeoutSec')) { $RunTimeoutSec = 2400 }
 
 function Log($m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 # stderr VBoxManage (полоса прогресса) в PS 5.1 при Stop превращается в ошибку - глушим
@@ -61,6 +69,17 @@ Set-Content -Path (Join-Path $share 'args.txt') -Value $ScrArgs -Encoding Ascii
 $defaultDirFlag = Join-Path $share 'defaultdir.txt'
 if ($DefaultDir) { Set-Content -Path $defaultDirFlag -Value 'default' -Encoding Ascii; Log 'Запуск без папки результатов' }
 elseif (Test-Path $defaultDirFlag) { Remove-Item $defaultDirFlag -Force }
+# флаг для run.cmd: вместо утилиты - collect_audit.cmd (скрипты кладутся рядом с run.cmd)
+$scriptFlag = Join-Path $share 'script.txt'
+if ($Script) {
+    foreach ($s in 'collect_audit.cmd', 'collect_network.cmd') {
+        $src = Join-Path $ScriptDir $s
+        if (Test-Path $src) { Copy-Item $src $share -Force } else { throw "Нет $src" }
+    }
+    Set-Content -Path $scriptFlag -Value 'script' -Encoding Ascii
+    Log "Эталон: collect_audit.cmd из $((Resolve-Path $ScriptDir).Path), ключи: '$ScrArgs'"
+}
+elseif (Test-Path $scriptFlag) { Remove-Item $scriptFlag -Force }
 $prepDst = Join-Path $share 'prep.cmd'
 if ($Prep) { Copy-Item $Prep $prepDst -Force; Log "Подготовка в госте: $Prep" } elseif (Test-Path $prepDst) { Remove-Item $prepDst -Force }
 $guestRes = Join-Path $share 'results'
@@ -219,9 +238,11 @@ while (-not $done) {
 Shot 'guest_after.png'
 
 if ($done) {
-    Copy-Item (Join-Path $done.DirectoryName '*') $script:resDir -Force
+    # с подпапками: у сбора данных результаты лежат в 00_... - 08_...
+    Copy-Item (Join-Path $done.DirectoryName '*') $script:resDir -Force -Recurse
     $rc = (Get-Content (Join-Path $script:resDir 'exitcode.txt') -ErrorAction SilentlyContinue | Select-Object -First 1)
-    Log ("Готово за {0:N0} с, код возврата screens: {1}" -f ((Get-Date) - $t0).TotalSeconds, $rc)
+    $what = if ($Script) { 'collect_audit.cmd' } else { 'screens' }
+    Log ("Готово за {0:N0} с, код возврата {1}: {2}" -f ((Get-Date) - $t0).TotalSeconds, $what, $rc)
 }
 
 if (-not $Keep) {

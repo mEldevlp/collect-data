@@ -260,6 +260,17 @@ BOOL os_can_capture(WCHAR *reason, int reason_cch)
     return TRUE;
 }
 
+void os_computer_name(WCHAR *name, int name_cch)
+{
+    DWORD length = GetEnvironmentVariableW(L"COMPUTERNAME", name, (DWORD)name_cch);
+
+    if (length > 0 && length < (DWORD)name_cch) return;
+
+    DWORD computer_cch = (DWORD)name_cch;
+
+    if (!GetComputerNameW(name, &computer_cch)) lstrcpynW(name, L"PC", name_cch);
+}
+
 // Основной IPv4-адрес (iphlpapi.dll подгружаем сами: список статических импортов exe не меняется)
 
 typedef DWORD (WINAPI *PFN_GetIpForwardTable)(PMIB_IPFORWARDTABLE, PULONG, BOOL);

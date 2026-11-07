@@ -4,6 +4,9 @@
 
 #include <windows.h>
 
+// Версия утилиты: в журналах и файле команд сбора
+#define SCREENS_VERSION L"0.2"
+
 // Путь к файлу, символов. MAX_PATH (260) - предел классических функций WinAPI для одного пути,
 // а у нас путь - это папка результатов плюс имя файла, поэтому буфер с двойным запасом.
 #define PATH_BUFFER_CCH (MAX_PATH * 2)
@@ -57,5 +60,8 @@ const WCHAR *skip_prefix(const WCHAR *text, const WCHAR *prefix);
 // Очередной элемент списка "a,b;c": start - начало элемента, возвращает его длину и
 // передвигает *cursor на следующий элемент. FALSE - список кончился.
 BOOL next_list_item(const WCHAR **cursor, const WCHAR **start, size_t *length);
+
+// Входит ли id в список "a,b,c" (без учёта регистра). Для /only.
+BOOL list_contains(const WCHAR *list, const WCHAR *id);
 
 #endif

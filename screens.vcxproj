@@ -119,6 +119,12 @@
     <ClCompile Include="src\names.c" />
     <ClCompile Include="src\acc.c" />
     <ClCompile Include="src\mmc.c" />
+    <ClCompile Include="src\text.c" />
+    <ClCompile Include="src\exec.c" />
+    <ClCompile Include="src\outfile.c" />
+    <ClCompile Include="src\collect.c" />
+    <ClCompile Include="src\sect_sysinfo.c" />
+    <ClCompile Include="src\sect_logs.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\common.h" />
@@ -133,6 +139,11 @@
     <ClInclude Include="src\names.h" />
     <ClInclude Include="src\acc.h" />
     <ClInclude Include="src\mmc.h" />
+    <ClInclude Include="src\text.h" />
+    <ClInclude Include="src\exec.h" />
+    <ClInclude Include="src\outfile.h" />
+    <ClInclude Include="src\collect.h" />
+    <ClInclude Include="src\sections.h" />
     <ClInclude Include="third_party\stb_image_write.h" />
   </ItemGroup>
   <ItemGroup>

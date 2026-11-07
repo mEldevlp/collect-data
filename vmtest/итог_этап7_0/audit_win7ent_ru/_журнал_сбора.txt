@@ -1,0 +1,27 @@
+﻿07.11.2026 19:13:32,57 Start: host AUDIT-W7RU, IP 169.254.252.160, OS version 6.1.7601, administrator yes
+07.11.2026 19:13:32,89 Exporting security policy - secedit
+07.11.2026 19:13:33,39 System information
+07.11.2026 19:13:37,60 Installed software
+07.11.2026 19:13:39,14 Programs and Features window list
+07.11.2026 19:13:39,81 Installed updates
+07.11.2026 19:13:40,17 Windows components
+07.11.2026 19:13:40,67 Time synchronization settings
+07.11.2026 19:13:41,67 Time synchronization summary
+07.11.2026 19:13:42,39 Audit policy
+07.11.2026 19:13:46,00 Event log settings
+07.11.2026 19:13:47,48 Account policies
+07.11.2026 19:13:48,73 Local accounts
+07.11.2026 19:13:49,09 Per-account files - net user
+07.11.2026 19:13:50,01 Local groups
+07.11.2026 19:13:51,73 Services
+07.11.2026 19:13:52,76 Services configuration - sc qc and sc sdshow
+07.11.2026 19:13:59,21 Remote administration settings
+07.11.2026 19:14:12,43 Copying log files
+Скопировано файлов: 6.
+Скопировано файлов: 3.
+07.11.2026 19:14:12,96 Network connections - collect_network.cmd
+07.11.2026 19:15:20,06 collect_network.cmd finished, exit code 0
+07.11.2026 19:15:20,09 Intermediate files - folder выгрузка
+07.11.2026 19:15:20,26 Converting results to UTF-8
+07.11.2026 19:15:22,03 Converted to UTF-8 from code pages 866 and 1251: 49 files, failed: 0
+07.11.2026 19:15:22,06 Finished

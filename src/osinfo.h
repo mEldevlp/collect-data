@@ -37,6 +37,12 @@ void os_set_dpi_aware(void);
 BOOL os_can_capture(WCHAR *reason, int reason_cch);
 
 #define OS_IPV4_TEXT_CCH 16     // "255.255.255.255" и завершающий ноль
+#define OS_NO_IP_TEXT    L"noip" // адреса IPv4 нет - так и в имени папки, как у collect_audit.cmd
+
+#define OS_COMPUTER_NAME_CCH (MAX_COMPUTERNAME_LENGTH + 1)
+
+// Имя компьютера, как %COMPUTERNAME% у collect_audit.cmd (переменной нет - GetComputerNameW, и того нет - "PC").
+void os_computer_name(WCHAR *name, int name_cch);
 
 // Основной IPv4-адрес текстом (как в collect_audit.cmd): адрес интерфейса первого маршрута по умолчанию
 // (первая такая строка "route print"), а если такого маршрута нет - первый адрес компьютера; 0.0.0.0

@@ -8,7 +8,9 @@ param(
     [string]$Prep = '',
     [string]$Resolution = '1024x768',
     [string]$LogFile = '',
-    [switch]$DefaultDir             # запуск без папки результатов (см. vm_test.ps1)
+    [switch]$DefaultDir,            # запуск без папки результатов (см. vm_test.ps1)
+    [switch]$Script,                # эталон: collect_audit.cmd вместо утилиты (см. vm_test.ps1)
+    [int]$RunTimeoutSec = 0         # лимит прогона одной ВМ, с; 0 - по умолчанию vm_test.ps1
 )
 # иначе PowerShell 5.1 отдаёт кириллицу в канал в кодировке консоли, и grep её не находит
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
@@ -19,9 +21,13 @@ function Out2($s) { $s; Add-Content -Path $LogFile -Value $s -Encoding UTF8 }
 foreach ($vm in ($Vms -split ',')) {
     Out2 "=== $vm START $(Get-Date -Format HH:mm:ss)"
     try {
-        $a = @{ Vm = $vm; ScrArgs = $ScrArgs; Resolution = $Resolution }
+        $a = @{ Vm = $vm; Resolution = $Resolution }
+        # у скрипта ключи утилиты по умолчанию не нужны: передаём только явно заданные
+        if (-not $Script -or $PSBoundParameters.ContainsKey('ScrArgs')) { $a.ScrArgs = $ScrArgs }
         if ($Prep) { $a.Prep = $Prep }
         if ($DefaultDir) { $a.DefaultDir = $true }
+        if ($Script) { $a.Script = $true }
+        if ($RunTimeoutSec -gt 0) { $a.RunTimeoutSec = $RunTimeoutSec }
         & $t @a *>&1 | ForEach-Object { Out2 "$_" }
     } catch {
         Out2 "=== $vm EXCEPTION: $_"

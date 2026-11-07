@@ -3,8 +3,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-#define LOG_FILE_NAME L"_журнал_скриншотов.txt"
-
 // Строка журнала, символов, вместе с временем и переводом строки. Длиннее - обрезается.
 #define LOG_LINE_CCH 2048
 
@@ -39,18 +37,22 @@ static void ensure_log_lock(void)
     g_log_lock_ready = TRUE;
 }
 
-BOOL log_open(const WCHAR *dir)
+BOOL log_open(const WCHAR *dir, const WCHAR *file_name)
 {
     WCHAR path[PATH_BUFFER_CCH];
     LARGE_INTEGER size;
 
-    ensure_log_lock();
-    format_text(path, PATH_BUFFER_CCH, L"%s\\%s", dir, LOG_FILE_NAME);
+    log_close();
+    format_text(path, PATH_BUFFER_CCH, L"%s\\%s", dir, file_name);
 
-    g_log_file = CreateFileW(path, FILE_APPEND_DATA | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE file = CreateFileW(path, FILE_APPEND_DATA | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
-    if (g_log_file == INVALID_HANDLE_VALUE) return FALSE;
+    if (file == INVALID_HANDLE_VALUE) return FALSE;
+
+    EnterCriticalSection(&g_log_lock);
+    g_log_file = file;
+    LeaveCriticalSection(&g_log_lock);
 
     // новый (пустой) файл начинаем с BOM, при дописывании в старый - не повторяем
     size.QuadPart = 0;

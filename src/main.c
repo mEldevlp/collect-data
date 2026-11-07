@@ -1,20 +1,23 @@
-// screens.exe - скриншоты для аудита ИБ.
-// screens.exe [папка_результатов] [/only:имя1,имя2] [/list] [/keep] [/dump] [/timeout:сек] [/primary]
+// screens.exe - сбор данных и скриншоты для аудита ИБ.
+// screens.exe [папка_результатов] [/only:имя1,имя2] [/list] [/nocollect] [/noscreens] [/nonet] [/ping] [/nopause]
+//             [/keep] [/dump] [/timeout:сек] [/wait:сек] [/pages:N] [/primary]
 // Без папки - <папка exe>\<ИМЯ_ПК>_<IP> (нельзя писать - %SystemDrive%\<ИМЯ_ПК>_<IP>), уже есть - туда же.
-// Коды возврата: 0 - все снимки сделаны, 1 - часть не удалась, 2 - снимать нельзя / ошибка запуска.
+// Сначала сбор данных (collect.c), затем снимки (scenarios.c).
+// Коды возврата: 0 - всё собрано и снято, 1 - часть не удалась, 2 - снимать нельзя / ошибка запуска.
 
 #include <windows.h>
 #include <limits.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include "collect.h"
 #include "common.h"
 #include "console.h"
+#include "exec.h"
 #include "log.h"
 #include "osinfo.h"
 #include "scenarios.h"
 #include "wnd.h"
-
-#define SCREENS_VERSION L"0.1"
 
 #define EXIT_OK      0
 #define EXIT_PARTIAL 1
@@ -23,7 +26,7 @@
 // parse_arguments: аргументы разобраны, работаем дальше (иначе - код выхода)
 #define PARSE_CONTINUE (-1)
 
-#define DEFAULT_TIMEOUT_SEC 300     // общий лимит работы
+#define DEFAULT_TIMEOUT_SEC 1200    // общий лимит работы: сбор данных и снимки
 #define DEFAULT_WAIT_SEC    45      // сколько ждать заполнения окна (список программ)
 #define DEFAULT_MAX_PAGES   10      // страниц длинного списка ПО
 #define MAX_PAGES_LIMIT     100     // /pages: больше не принимаем
@@ -33,8 +36,7 @@
 #define DRIVE_ROOT_LENGTH 3         // "C:\" - у корня диска завершающий \ не убираем
 
 // Папка результатов по умолчанию: <ИМЯ_ПК>_<IP>, как у collect_audit.cmd
-#define NO_IP_TEXT       L"noip"                    // адреса IPv4 нет
-#define FOLDER_NAME_CCH  (MAX_COMPUTERNAME_LENGTH + 1 + OS_IPV4_TEXT_CCH)
+#define FOLDER_NAME_CCH  (OS_COMPUTER_NAME_CCH + 1 + OS_IPV4_TEXT_CCH)
 #define WRITE_TEST_FILE  L"_проверка_записи.tmp"    // создаётся и сразу удаляется: можно ли писать в папку
 
 // Пауза в конце: чтобы отличить "к консоли подключены только мы" от "мы и cmd", хватает двух мест
@@ -44,8 +46,13 @@
 typedef struct
 {
     const WCHAR *results_dir;
-    const WCHAR *only;              // список сценариев из /only или NULL
+    const WCHAR *only;              // список сценариев и разделов сбора из /only или NULL
     BOOL         list;
+    BOOL         no_collect;        // /nocollect - только снимки
+    BOOL         no_screens;        // /noscreens - только сбор данных
+    BOOL         no_network;        // /nonet - без сетевых связей
+    BOOL         ping;              // /ping - опрос подключённых подсетей (сетевые связи)
+    BOOL         no_pause;          // /nopause - не ждать нажатия клавиши
     BOOL         keep;
     BOOL         dump;
     BOOL         primary_only;      // снимать только основной монитор
@@ -59,15 +66,21 @@ static DWORD  g_timeout_sec = DEFAULT_TIMEOUT_SEC;
 
 static void usage(void)
 {
-    log_raw(L"screens.exe %s - снимки экрана для аудита ИБ", SCREENS_VERSION);
+    log_raw(L"screens.exe %s - сбор данных и снимки экрана для аудита ИБ", SCREENS_VERSION);
     log_raw(L"");
-    log_raw(L"  screens.exe [папка] [/only:имя1,имя2] [/list] [/keep] [/dump] [/timeout:сек] [/wait:сек] [/pages:N] "
-            L"[/primary]");
+    log_raw(L"  screens.exe [папка] [/only:имя1,имя2] [/list] [/nocollect] [/noscreens] [/nonet] [/ping] [/nopause]");
+    log_raw(L"              [/keep] [/dump] [/timeout:сек] [/wait:сек] [/pages:N] [/primary]");
     log_raw(L"");
-    log_raw(L"  папка        куда класть снимки; без неё - <ИМЯ_ПК>_<IP> рядом с exe (если там писать нельзя -");
-    log_raw(L"               на системном диске); папка уже есть - снимки кладутся в неё");
-    log_raw(L"  /only:...    снять только указанные сценарии (имена - см. /list)");
-    log_raw(L"  /list        список сценариев");
+    log_raw(L"  папка        куда класть результаты; без неё - <ИМЯ_ПК>_<IP> рядом с exe (если там писать нельзя -");
+    log_raw(L"               на системном диске); папка уже есть - результаты кладутся в неё");
+    log_raw(L"  /only:...    только указанные разделы сбора и сценарии снимков (имена - см. /list)");
+    log_raw(L"  /list        список разделов сбора и сценариев");
+    log_raw(L"  /nocollect   без сбора данных, только снимки");
+    log_raw(L"  /noscreens   без снимков, только сбор данных");
+    log_raw(L"  /nonet       без сетевых связей");
+    log_raw(L"  /ping        сетевые связи: опросить ping подключённые подсети (системы обнаружения вторжений могут");
+    log_raw(L"               принять это за сканирование сети)");
+    log_raw(L"  /nopause     не ждать нажатия клавиши (в конце и при запуске без прав администратора)");
     log_raw(L"  /keep        не закрывать открытые окна (отладка)");
     log_raw(L"  /dump        записать в журнал дерево окон и MMC");
     log_raw(L"  /timeout:N   общий лимит работы в секундах (по умолчанию %d)", DEFAULT_TIMEOUT_SEC);
@@ -76,12 +89,12 @@ static void usage(void)
     log_raw(L"  /pages:N     длинный список ПО - не больше N страниц (по умолчанию %d)", DEFAULT_MAX_PAGES);
     log_raw(L"  /primary     снимать только основной монитор (по умолчанию - все мониторы)");
     log_raw(L"");
-    log_raw(L"  Коды возврата: 0 - всё снято, 1 - часть не удалась, 2 - снимать нельзя");
+    log_raw(L"  Коды возврата: 0 - всё собрано и снято, 1 - часть не удалась, 2 - снимать нельзя");
 }
 
 static void list_scenarios(void)
 {
-    log_raw(L"Сценарии:");
+    log_raw(L"Сценарии снимков:");
 
     for (int i = 0; i < g_scenario_count; i++)
     {
@@ -90,22 +103,6 @@ static void list_scenarios(void)
         log_raw(L"  %-18s %-26s %s%s%s", scenario->id, scenario->file_name, scenario->title,
                 scenario->hidden ? L" [только по /only]" : L"", scenario->run ? L"" : L" [не реализован]");
     }
-}
-
-// Входит ли id в список "a,b,c" (без учёта регистра).
-static BOOL in_list(const WCHAR *list, const WCHAR *id)
-{
-    size_t id_length = wcslen(id);
-    const WCHAR *cursor = list;
-    const WCHAR *item;
-    size_t item_length;
-
-    while (next_list_item(&cursor, &item, &item_length))
-    {
-        if (item_length == id_length && _wcsnicmp(item, id, id_length) == 0) return TRUE;
-    }
-
-    return FALSE;
 }
 
 // Есть ли сценарий с именем name (длиной length, без учёта регистра).
@@ -121,7 +118,22 @@ static BOOL scenario_exists(const WCHAR *name, size_t length)
     return FALSE;
 }
 
-// Проверить, что все имена из /only существуют; неизвестные - предупреждение в журнал.
+static BOOL scenario_selected(const SCENARIO *scenario, const WCHAR *only)
+{
+    return only ? list_contains(only, scenario->id) : !scenario->hidden;
+}
+
+static BOOL any_scenario_selected(const WCHAR *only)
+{
+    for (int i = 0; i < g_scenario_count; i++)
+    {
+        if (scenario_selected(&g_scenarios[i], only)) return TRUE;
+    }
+
+    return FALSE;
+}
+
+// Проверить, что все имена из /only существуют (среди сценариев и разделов сбора); неизвестные - предупреждение.
 static void check_only_list(const WCHAR *only)
 {
     const WCHAR *cursor = only;
@@ -130,9 +142,9 @@ static void check_only_list(const WCHAR *only)
 
     while (next_list_item(&cursor, &item, &item_length))
     {
-        if (item_length > 0 && !scenario_exists(item, item_length))
+        if (item_length > 0 && !scenario_exists(item, item_length) && !collect_section_exists(item, item_length))
         {
-            log_msg(L"Внимание: неизвестный сценарий в /only: %.*s", (int)item_length, item);
+            log_msg(L"Внимание: неизвестное имя в /only: %.*s", (int)item_length, item);
         }
     }
 }
@@ -144,6 +156,7 @@ static DWORD WINAPI watchdog_proc(LPVOID arg)
     if (WaitForSingleObject(g_done_event, g_timeout_sec * MS_PER_SECOND) == WAIT_TIMEOUT)
     {
         log_msg(L"СТОРОЖЕВОЙ ТАЙМЕР: работа идёт дольше %lu с, аварийное завершение", g_timeout_sec);
+        exec_abort();
         wnd_emergency_cleanup();
         log_close();
         ExitProcess(EXIT_PARTIAL);
@@ -157,6 +170,7 @@ static BOOL WINAPI console_ctrl_handler(DWORD control_type)
     (void)control_type;
 
     log_msg(L"Прервано (Ctrl+C / закрытие консоли)");
+    exec_abort();
     wnd_emergency_cleanup();
     log_close();
 
@@ -189,19 +203,12 @@ static void full_results_dir(const WCHAR *results_dir, WCHAR *full_path, int ful
 // Имя папки результатов по умолчанию: <ИМЯ_ПК>_<IP> - как %COMPUTERNAME%_%IP% у collect_audit.cmd.
 static void default_folder_name(WCHAR *name, int name_cch)
 {
-    WCHAR computer[MAX_COMPUTERNAME_LENGTH + 1];
+    WCHAR computer[OS_COMPUTER_NAME_CCH];
     WCHAR address[OS_IPV4_TEXT_CCH];
-    DWORD computer_cch = (DWORD)ARRAY_COUNT(computer);
-    DWORD length = GetEnvironmentVariableW(L"COMPUTERNAME", computer, computer_cch);
 
-    if (length == 0 || length >= computer_cch)
-    {
-        computer_cch = (DWORD)ARRAY_COUNT(computer);
+    os_computer_name(computer, OS_COMPUTER_NAME_CCH);
 
-        if (!GetComputerNameW(computer, &computer_cch)) lstrcpyW(computer, L"PC");
-    }
-
-    if (!os_primary_ipv4(address, OS_IPV4_TEXT_CCH)) lstrcpyW(address, NO_IP_TEXT);
+    if (!os_primary_ipv4(address, OS_IPV4_TEXT_CCH)) lstrcpyW(address, OS_NO_IP_TEXT);
 
     format_text(name, name_cch, L"%s_%s", computer, address);
 }
@@ -292,23 +299,42 @@ static BOOL own_console(void)
     return GetConsoleProcessList(process_ids, CONSOLE_PROCESS_PROBE) == 1;
 }
 
-// Ждать нажатия клавиши (только на экран: журнал к этому времени закрыт).
-static void wait_key(void)
+// Ждать нажатия клавиши (нажатия, сделанные раньше, не в счёт).
+static void read_key(void)
 {
     HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
     INPUT_RECORD record;
     DWORD read_count = 0;
 
-    log_raw(L"");
-    log_raw(L"Нажмите любую клавишу, чтобы закрыть окно...");
-
-    // нажатия во время работы утилиты не в счёт
     FlushConsoleInputBuffer(input);
 
     while (ReadConsoleInputW(input, &record, 1, &read_count) && read_count > 0)
     {
         if (record.EventType == KEY_EVENT && record.Event.KeyEvent.bKeyDown) break;
     }
+}
+
+// Пауза в конце (только на экран: журнал к этому времени закрыт).
+static void wait_key(void)
+{
+    log_raw(L"");
+    log_raw(L"Нажмите любую клавишу, чтобы закрыть окно...");
+    read_key();
+}
+
+// Без прав администратора часть сведений не собрать: предупреждение, а при запуске из Проводника - пауза,
+// чтобы можно было закрыть окно и запустить программу "от имени администратора" (как у collect_audit.cmd).
+static void warn_not_admin(BOOL allow_pause)
+{
+    log_raw(L"");
+    log_raw(L"ВНИМАНИЕ: программа запущена без прав администратора.");
+    log_raw(L"Политика безопасности, политика аудита и часть других сведений не будут собраны.");
+
+    if (!allow_pause) return;
+
+    log_raw(L"Закройте окно и запустите программу \"от имени администратора\" или нажмите любую клавишу,");
+    log_raw(L"чтобы продолжить без этих прав.");
+    read_key();
 }
 
 // Число из ключа "/имя:N": больше 0 и не больше max_value - в *value, иначе значение не меняется.
@@ -325,6 +351,44 @@ static BOOL is_switch(const WCHAR *argument)
     return argument[0] == L'/' || (argument[0] == L'-' && argument[1] != 0 && argument[1] != L'\\');
 }
 
+// Ключ без значения: имя, поле OPTIONS (смещение - инициализатор таблицы должен быть константой) и значение
+typedef struct
+{
+    const WCHAR *name;
+    size_t       offset;
+    BOOL         value;
+} FLAG_SWITCH;
+
+static const FLAG_SWITCH FLAG_SWITCHES[] =
+{
+    { L"list",        offsetof(OPTIONS, list),         TRUE },
+    { L"nocollect",   offsetof(OPTIONS, no_collect),   TRUE },
+    { L"noscreens",   offsetof(OPTIONS, no_screens),   TRUE },
+    { L"nonet",       offsetof(OPTIONS, no_network),   TRUE },
+    { L"ping",        offsetof(OPTIONS, ping),         TRUE },
+    { L"nopause",     offsetof(OPTIONS, no_pause),     TRUE },
+    { L"keep",        offsetof(OPTIONS, keep),         TRUE },
+    { L"dump",        offsetof(OPTIONS, dump),         TRUE },
+    { L"primary",     offsetof(OPTIONS, primary_only), TRUE },
+    { L"allmonitors", offsetof(OPTIONS, primary_only), FALSE },
+};
+
+// Ключ без значения (FLAG_SWITCHES). TRUE - такой ключ есть.
+static BOOL parse_flag(const WCHAR *name, OPTIONS *options)
+{
+    for (int i = 0; i < (int)ARRAY_COUNT(FLAG_SWITCHES); i++)
+    {
+        const FLAG_SWITCH *flag = &FLAG_SWITCHES[i];
+
+        if (_wcsicmp(name, flag->name) != 0) continue;
+
+        *(BOOL *)((BYTE *)options + flag->offset) = flag->value;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 // Разобрать один ключ. PARSE_CONTINUE - дальше, иначе код выхода (справка или ошибка).
 static int parse_switch(const WCHAR *argument, OPTIONS *options)
 {
@@ -334,25 +398,9 @@ static int parse_switch(const WCHAR *argument, OPTIONS *options)
     const WCHAR *pages = skip_prefix(name, L"pages:");
     const WCHAR *wait = skip_prefix(name, L"wait:");
 
-    if (_wcsicmp(name, L"list") == 0)
+    if (parse_flag(name, options))
     {
-        options->list = TRUE;
-    }
-    else if (_wcsicmp(name, L"keep") == 0)
-    {
-        options->keep = TRUE;
-    }
-    else if (_wcsicmp(name, L"dump") == 0)
-    {
-        options->dump = TRUE;
-    }
-    else if (_wcsicmp(name, L"primary") == 0)
-    {
-        options->primary_only = TRUE;
-    }
-    else if (_wcsicmp(name, L"allmonitors") == 0)
-    {
-        options->primary_only = FALSE;
+        return PARSE_CONTINUE;
     }
     else if (only)
     {
@@ -429,9 +477,8 @@ static int run_scenarios(const SCEN_CONTEXT *context, const WCHAR *only, int *to
     for (int i = 0; i < g_scenario_count; i++)
     {
         const SCENARIO *scenario = &g_scenarios[i];
-        BOOL selected = only ? in_list(only, scenario->id) : !scenario->hidden;
 
-        if (!selected) continue;
+        if (!scenario_selected(scenario, only)) continue;
 
         (*total)++;
         log_msg(L"--- Сценарий %s: %s", scenario->id, scenario->title);
@@ -473,44 +520,44 @@ static BOOL prepare_results_dir(const OPTIONS *options, WCHAR *results_dir, WCHA
     return FALSE;
 }
 
-// Вся работа утилиты (кроме служебного запуска помощника). Возвращает код выхода.
-static int run(int argc, WCHAR **argv)
+// Открыть журнал в папке результатов; не открылся - пишем только в консоль.
+static void open_log(const WCHAR *results_dir, const WCHAR *file_name)
 {
-    OPTIONS options;
-    WCHAR results_dir[PATH_BUFFER_CCH];
-    WCHAR note[MESSAGE_BUFFER_CCH];
-    WCHAR reason[MESSAGE_BUFFER_CCH];
     WCHAR error_text[TEXT_BUFFER_CCH];
-    OSINFO os_info;
+
+    if (log_open(results_dir, file_name)) return;
+
+    log_raw(L"Внимание: не удалось открыть журнал %s в %s: %s", file_name, results_dir,
+            log_errtext(GetLastError(), error_text, TEXT_BUFFER_CCH));
+}
+
+// Сбор данных со своим журналом. Возвращает число разделов, которые не удались.
+static int run_collect(const COLLECT_OPTIONS *collect_options)
+{
+    open_log(collect_options->results_dir, LOG_COLLECT_FILE);
+
+    int failed = collect_run(collect_options);
+
+    log_close();
+
+    return failed;
+}
+
+// Снимки со своим журналом. Возвращает код выхода снимков.
+static int run_screens(const OPTIONS *options, const WCHAR *results_dir, const WCHAR *note, const OSINFO *os_info)
+{
+    WCHAR reason[MESSAGE_BUFFER_CCH];
     SCEN_CONTEXT context;
     int total = 0;
 
-    int parse_result = parse_arguments(argc, argv, &options);
-
-    if (parse_result != PARSE_CONTINUE) return parse_result;
-
-    if (options.list)
-    {
-        list_scenarios();
-        return EXIT_OK;
-    }
-
-    if (!prepare_results_dir(&options, results_dir, note, MESSAGE_BUFFER_CCH)) return EXIT_CANNOT;
-
-    if (!log_open(results_dir))
-    {
-        log_raw(L"Внимание: не удалось открыть журнал в %s: %s", results_dir,
-                log_errtext(GetLastError(), error_text, TEXT_BUFFER_CCH));
-    }
-
+    open_log(results_dir, LOG_SCREENS_FILE);
     log_raw(L"");
     log_msg(L"=== screens.exe %s, запуск: %s", SCREENS_VERSION, GetCommandLineW());
     log_msg(L"Папка результатов: %s", results_dir);
 
     if (note[0]) log_msg(L"Внимание: %s", note);
 
-    os_get(&os_info);
-    os_log(&os_info);
+    os_log(os_info);
 
     if (!os_can_capture(reason, MESSAGE_BUFFER_CCH))
     {
@@ -520,36 +567,19 @@ static int run(int argc, WCHAR **argv)
         return EXIT_CANNOT;
     }
 
-    g_timeout_sec = (DWORD)options.timeout_sec;
-    g_done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
-
-    HANDLE watchdog = CreateThread(NULL, 0, watchdog_proc, NULL, 0, NULL);
-
-    SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
-
     ZeroMemory(&context, sizeof(context));
     context.results_dir = results_dir;
-    context.all_monitors = !options.primary_only;
-    context.keep = options.keep;
-    context.dump = options.dump;
-    context.wait_ms = (DWORD)options.wait_sec * MS_PER_SECOND;
-    context.max_pages = (int)options.max_pages;
-    context.os_info = &os_info;
+    context.all_monitors = !options->primary_only;
+    context.keep = options->keep;
+    context.dump = options->dump;
+    context.wait_ms = (DWORD)options->wait_sec * MS_PER_SECOND;
+    context.max_pages = (int)options->max_pages;
+    context.os_info = os_info;
 
-    if (options.only) check_only_list(options.only);
-
-    int succeeded = run_scenarios(&context, options.only, &total);
+    int succeeded = run_scenarios(&context, options->only, &total);
 
     // окно сведений о системе и всё, что осталось открытым
-    wnd_close_all(options.keep);
-
-    SetEvent(g_done_event);
-
-    if (watchdog)
-    {
-        WaitForSingleObject(watchdog, WATCHDOG_STOP_WAIT_MS);
-        CloseHandle(watchdog);
-    }
+    wnd_close_all(options->keep);
 
     int exit_code = EXIT_CANNOT;
 
@@ -558,6 +588,89 @@ static int run(int argc, WCHAR **argv)
 
     log_msg(L"=== Завершено: снято %d из %d, код %d", succeeded, total, exit_code);
     log_close();
+
+    return exit_code;
+}
+
+// Сторожевой таймер на всю работу: сбор и снимки. NULL - поток не создан (работаем без сторожа).
+static HANDLE start_watchdog(long timeout_sec)
+{
+    g_timeout_sec = (DWORD)timeout_sec;
+    g_done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+
+    return CreateThread(NULL, 0, watchdog_proc, NULL, 0, NULL);
+}
+
+static void stop_watchdog(HANDLE watchdog)
+{
+    SetEvent(g_done_event);
+
+    if (!watchdog) return;
+
+    WaitForSingleObject(watchdog, WATCHDOG_STOP_WAIT_MS);
+    CloseHandle(watchdog);
+}
+
+// Вся работа утилиты (кроме служебного запуска помощника). Возвращает код выхода.
+// interactive - окно консоли наше (запуск из Проводника); *allow_pause - можно ли ждать клавишу в конце.
+static int run(int argc, WCHAR **argv, BOOL interactive, BOOL *allow_pause)
+{
+    OPTIONS options;
+    COLLECT_OPTIONS collect_options;
+    WCHAR results_dir[PATH_BUFFER_CCH];
+    WCHAR note[MESSAGE_BUFFER_CCH];
+    OSINFO os_info;
+
+    int parse_result = parse_arguments(argc, argv, &options);
+
+    *allow_pause = !options.no_pause;
+
+    if (parse_result != PARSE_CONTINUE) return parse_result;
+
+    if (options.list)
+    {
+        collect_list();
+        log_raw(L"");
+        list_scenarios();
+        return EXIT_OK;
+    }
+
+    if (!prepare_results_dir(&options, results_dir, note, MESSAGE_BUFFER_CCH)) return EXIT_CANNOT;
+
+    os_get(&os_info);
+
+    ZeroMemory(&collect_options, sizeof(collect_options));
+    collect_options.results_dir = results_dir;
+    collect_options.os_info = &os_info;
+    collect_options.folder_note = note;
+    collect_options.only = options.only;
+    collect_options.no_network = options.no_network;
+    collect_options.ping = options.ping;
+
+    BOOL want_collect = !options.no_collect && collect_any_selected(&collect_options);
+    BOOL want_screens = !options.no_screens && any_scenario_selected(options.only);
+
+    // до журналов: предупреждение - только на экран (и в _stdout.txt прогона на ВМ)
+    if (options.only) check_only_list(options.only);
+
+    if (!want_collect && !want_screens)
+    {
+        log_raw(L"Не выбрано ни одного раздела сбора или сценария снимков");
+        return EXIT_CANNOT;
+    }
+
+    if (!os_info.is_admin) warn_not_admin(interactive && !options.no_pause);
+
+    HANDLE watchdog = start_watchdog(options.timeout_sec);
+
+    SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+
+    int collect_failed = want_collect ? run_collect(&collect_options) : 0;
+    int exit_code = want_screens ? run_screens(&options, results_dir, note, &os_info) : EXIT_OK;
+
+    stop_watchdog(watchdog);
+
+    if (exit_code == EXIT_OK && collect_failed > 0) exit_code = EXIT_PARTIAL;
 
     return exit_code;
 }
@@ -571,10 +684,11 @@ int wmain(int argc, WCHAR **argv)
     if (con_is_helper(argc, argv)) return con_helper_main(argc, argv);
 
     // запуск из Проводника: окно консоли наше и закроется сразу - итог должен успеть прочитать человек
-    BOOL pause_at_exit = own_console();
-    int exit_code = run(argc, argv);
+    BOOL interactive = own_console();
+    BOOL allow_pause = TRUE;
+    int exit_code = run(argc, argv, interactive, &allow_pause);
 
-    if (pause_at_exit) wait_key();
+    if (interactive && allow_pause) wait_key();
 
     return exit_code;
 }

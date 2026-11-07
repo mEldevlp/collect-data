@@ -4,9 +4,14 @@
 
 #include <windows.h>
 
-// Открыть журнал <dir>\_журнал_скриншотов.txt (дописывание). FALSE - не удалось,
-// тогда пишем только в консоль.
-BOOL log_open(const WCHAR *dir);
+// Журналы в папке результатов: сбор данных и снимки - в разных файлах. Тексты строк журнала снимков
+// разбирает vmtest\make_summary.ps1, журнала сбора - make_md.ps1 (строка "Finished") и make_summary.ps1 (время).
+#define LOG_COLLECT_FILE L"_журнал_сбора.txt"
+#define LOG_SCREENS_FILE L"_журнал_скриншотов.txt"
+
+// Открыть журнал <dir>\<file_name> (дописывание). FALSE - не удалось, тогда пишем только в консоль.
+// Открытый ранее журнал закрывается.
+BOOL log_open(const WCHAR *dir, const WCHAR *file_name);
 void log_close(void);
 
 // Строка журнала с временем. Формат как у swprintf.

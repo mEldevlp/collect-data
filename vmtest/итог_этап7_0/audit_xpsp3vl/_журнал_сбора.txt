@@ -1,0 +1,27 @@
+﻿07.11.2026 19:27:08,56 Start: host AUDIT-XPSP3, IP 169.254.202.41, OS version 5.1.2600, administrator yes
+07.11.2026 19:27:16,45 Exporting security policy - secedit
+07.11.2026 19:27:26,40 System information
+07.11.2026 19:27:57,44 Installed software
+07.11.2026 19:28:20,53 Installed updates
+07.11.2026 19:28:28,12 Windows components
+07.11.2026 19:28:30,65 Time synchronization settings
+07.11.2026 19:28:47,76 Time synchronization summary
+07.11.2026 19:29:03,40 Audit policy
+07.11.2026 19:29:36,39 Event log settings
+07.11.2026 19:29:59,73 Account policies
+07.11.2026 19:30:23,17 Local accounts
+07.11.2026 19:30:35,76 Per-account files - net user
+07.11.2026 19:31:17,03 Local groups
+07.11.2026 19:31:47,86 Services
+07.11.2026 19:31:59,26 Services configuration - sc qc and sc sdshow
+07.11.2026 19:35:39,50 Remote administration settings
+07.11.2026 19:37:43,78 Copying log files
+Скопировано файлов: 27.
+Не найден файл: *.log
+Скопировано файлов: 0.
+07.11.2026 19:37:52,33 Network connections - collect_network.cmd
+07.11.2026 19:40:58,08 collect_network.cmd finished, exit code 0
+07.11.2026 19:40:58,59 Intermediate files - folder выгрузка
+07.11.2026 19:41:01,64 Converting results to UTF-8 - Windows Script Host
+07.11.2026 19:41:11 Converted to UTF-8 from code pages 866 and 1251: 46 files, failed: 0
+07.11.2026 19:41:12,36 Finished

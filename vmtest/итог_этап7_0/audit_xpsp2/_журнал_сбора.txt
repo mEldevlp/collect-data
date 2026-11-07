@@ -1,0 +1,31 @@
+﻿07.11.2026 18:55:05,83 Start: host AUDIT-XPSP2, IP 169.254.29.75, OS version 5.1.2600, administrator yes
+07.11.2026 18:55:13,24 Exporting security policy - secedit
+07.11.2026 18:55:19,33 secedit: the local export has no settings, retrying with /db secedit.sdb
+07.11.2026 18:55:22,39 secedit: the local export has no settings, retrying without /areas
+07.11.2026 18:55:25,39 secedit: the local export still has no settings, see the secedit log in folder 00
+07.11.2026 18:55:25,69 secedit: saving the security template applied at Windows setup, repair\secsetup.inf
+07.11.2026 18:55:46,45 System information
+07.11.2026 18:56:16,95 Installed software
+07.11.2026 18:56:40,10 Installed updates
+07.11.2026 18:56:47,49 Windows components
+07.11.2026 18:56:50,11 Time synchronization settings
+07.11.2026 18:57:06,66 Time synchronization summary
+07.11.2026 18:57:21,67 Audit policy
+07.11.2026 18:58:02,56 Event log settings
+07.11.2026 18:58:26,03 Account policies
+07.11.2026 18:58:54,08 Local accounts
+07.11.2026 18:59:07,38 Per-account files - net user
+07.11.2026 18:59:48,61 Local groups
+07.11.2026 19:00:17,31 Services
+07.11.2026 19:00:28,52 Services configuration - sc qc and sc sdshow
+07.11.2026 19:03:49,28 Remote administration settings
+07.11.2026 19:05:55,22 Copying log files
+Скопировано файлов: 27.
+Не найден файл: *.log
+Скопировано файлов: 0.
+07.11.2026 19:06:03,69 Network connections - collect_network.cmd
+07.11.2026 19:09:27,33 collect_network.cmd finished, exit code 0
+07.11.2026 19:09:28,50 Intermediate files - folder выгрузка
+07.11.2026 19:09:34,64 Converting results to UTF-8 - Windows Script Host
+07.11.2026 19:10:19 Converted to UTF-8 from code pages 866 and 1251: 48 files, failed: 0
+07.11.2026 19:10:21,02 Finished

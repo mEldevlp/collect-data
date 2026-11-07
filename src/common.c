@@ -46,3 +46,18 @@ BOOL next_list_item(const WCHAR **cursor, const WCHAR **start, size_t *length)
 
     return TRUE;
 }
+
+BOOL list_contains(const WCHAR *list, const WCHAR *id)
+{
+    size_t id_length = wcslen(id);
+    const WCHAR *cursor = list;
+    const WCHAR *item;
+    size_t item_length;
+
+    while (next_list_item(&cursor, &item, &item_length))
+    {
+        if (item_length == id_length && _wcsnicmp(item, id, id_length) == 0) return TRUE;
+    }
+
+    return FALSE;
+}
