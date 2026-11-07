@@ -1,0 +1,37 @@
+# Visual Studio: кэш IntelliSense, индексы, личные настройки
+.vs/
+*.user
+*.suo
+*.aps
+*.ipch
+*.VC.db
+*.VC.opendb
+
+# Сборка: промежуточные файлы (obj\) и готовые exe (..\bin\ и т. п.)
+obj/
+bin/
+*.obj
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+*.tlog
+*.exe
+
+# Тесты на ВМ: сырые результаты прогонов (снимки, журналы) - пересоздаются vm_test.ps1
+vmtest/results/
+
+# Общая папка ВМ: при прогоне туда копируются exe, args.txt, prep.cmd и результаты;
+# хранить нужно только сам запускатель run.cmd
+vmtest/share/*
+!vmtest/share/run.cmd
+
+# Системные DLL Windows XP для check_imports.ps1 - файлы Microsoft, публиковать нельзя;
+# распаковываются из ISO дистрибутивов (см. check_imports.ps1)
+vmtest/xpdlls/
+
+# Временные файлы
+*.tmp
+*.log
+Thumbs.db
+desktop.ini

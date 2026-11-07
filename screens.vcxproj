@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{5C3E1A27-8B4D-4F0E-9A61-2D7B3C9E4F10}</ProjectGuid>
+    <RootNamespace>screens</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <!-- v141_xp берёт Windows 7.1A SDK сам; для пробной сборки другим набором - Windows 10 SDK -->
+    <WindowsTargetPlatformVersion Condition="'$(PlatformToolset)' != '' And '$(PlatformToolset)' != 'v141_xp'">10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <!-- Основной набор - v141_xp. Для пробной сборки: msbuild /p:PlatformToolset=v145 -->
+    <PlatformToolset Condition="'$(PlatformToolset)' == ''">v141_xp</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <UseDebugLibraries Condition="'$(Configuration)' == 'Debug'">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="'$(Configuration)' == 'Release'">false</UseDebugLibraries>
+    <WholeProgramOptimization Condition="'$(Configuration)' == 'Release'">true</WholeProgramOptimization>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <PropertyGroup>
+    <ArchSuffix Condition="'$(Platform)' == 'Win32'">x86</ArchSuffix>
+    <ArchSuffix Condition="'$(Platform)' == 'x64'">x64</ArchSuffix>
+    <TargetName>screens_$(ArchSuffix)</TargetName>
+    <IntDir>$(MSBuildThisFileDirectory)obj\$(PlatformToolset)\$(Configuration)_$(ArchSuffix)\</IntDir>
+    <!-- Готовые exe для объектов (Release, v141_xp) - в bin\ рядом с collect_audit.cmd, остальное - в obj -->
+    <OutDir Condition="'$(Configuration)' == 'Release' And '$(PlatformToolset)' == 'v141_xp'">$(MSBuildThisFileDirectory)..\bin\</OutDir>
+    <OutDir Condition="'$(OutDir)' == '' Or !('$(Configuration)' == 'Release' And '$(PlatformToolset)' == 'v141_xp')">$(IntDir)</OutDir>
+    <GenerateManifest>false</GenerateManifest>
+    <!-- MSB8051 "поддержка XP прекращена" - знаем -->
+    <XPDeprecationWarning>false</XPDeprecationWarning>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>Level4</WarningLevel>
+      <PreprocessorDefinitions>_WIN32_WINNT=0x0501;WINVER=0x0501;_WIN32_IE=0x0600;WIN32_LEAN_AND_MEAN;UNICODE;_UNICODE;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <SDLCheck>false</SDLCheck>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <MinimumRequiredVersion Condition="'$(PlatformToolset)' == 'v141_xp' And '$(Platform)' == 'Win32'">5.01</MinimumRequiredVersion>
+      <MinimumRequiredVersion Condition="'$(PlatformToolset)' == 'v141_xp' And '$(Platform)' == 'x64'">5.02</MinimumRequiredVersion>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;advapi32.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <!-- pdb - в obj, в bin\ только exe -->
+      <ProgramDatabaseFile>$(IntDir)$(TargetName).pdb</ProgramDatabaseFile>
+      <RandomizedBaseAddress>true</RandomizedBaseAddress>
+      <DataExecutionPrevention>true</DataExecutionPrevention>
+    </Link>
+    <ResourceCompile>
+      <PreprocessorDefinitions>_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)' == 'Release'">
+    <ClCompile>
+      <Optimization>MinSpace</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <!-- обычный LTCG, без инкрементального (.iobj/.ipdb рядом с exe) -->
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)' == 'Debug'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="src\main.c" />
+    <ClCompile Include="src\common.c" />
+    <ClCompile Include="src\buffer.c" />
+    <ClCompile Include="src\log.c" />
+    <ClCompile Include="src\osinfo.c" />
+    <ClCompile Include="src\capture.c" />
+    <ClCompile Include="src\wnd.c" />
+    <ClCompile Include="src\tray.c" />
+    <ClCompile Include="src\scroll.c" />
+    <ClCompile Include="src\scenarios.c" />
+    <ClCompile Include="src\console.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\common.h" />
+    <ClInclude Include="src\buffer.h" />
+    <ClInclude Include="src\log.h" />
+    <ClInclude Include="src\osinfo.h" />
+    <ClInclude Include="src\capture.h" />
+    <ClInclude Include="src\wnd.h" />
+    <ClInclude Include="src\scenarios.h" />
+    <ClInclude Include="src\scroll.h" />
+    <ClInclude Include="src\console.h" />
+    <ClInclude Include="third_party\stb_image_write.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="screens.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="screens.manifest" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
