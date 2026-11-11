@@ -63,6 +63,10 @@
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <SDLCheck>false</SDLCheck>
       <BufferSecurityCheck>true</BufferSecurityCheck>
+      <!-- x86 - /arch:IA32: по умолчанию /arch:SSE2, а на объектах есть ВМ с процессором VIA C3 Nehemiah
+           без SSE2 (NDEGF, UZRGF...): exe падал на первой инструкции SSE2. SSE2-ветки CRT (memcpy, log10...)
+           включаются сами по CPUID. Для x64 ключа нет - SSE2 есть у любого x64-процессора -->
+      <EnableEnhancedInstructionSet Condition="'$(Platform)' == 'Win32'">NoExtensions</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
